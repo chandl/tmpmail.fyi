@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/example/tmpmail/internal/app"
+	"github.com/chandl/tmpmail.fyi/internal/app"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-module github.com/example/tmpmail
+module github.com/chandl/tmpmail.fyi
 
 go 1.27.0
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/tmpmail/internal/api"
+	"github.com/chandl/tmpmail.fyi/internal/api"
 )
 
 func NewHTTPServer(cfg Config, store *Store) http.Handler {
