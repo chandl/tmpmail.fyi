@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,14 +14,33 @@ import (
 	"time"
 )
 
+const (
+	maxSMTPConnections      = 100
+	maxSMTPConnectionsPerIP = 10
+	maxSMTPCommandLineBytes = 8 << 10
+	maxSMTPDataLineBytes    = 8 << 10
+	maxSMTPRecipients       = 100
+	smtpSessionTimeout      = 2 * time.Minute
+)
+
+var (
+	errSMTPLineTooLong = errors.New("SMTP line too long")
+	errMessageTooLarge = errors.New("message too large")
+)
+
 type SMTPServer struct {
 	cfg      Config
 	store    *Store
 	listener net.Listener
 	mu       sync.Mutex
+	sessions chan struct{}
+	sourceMu sync.Mutex
+	sources  map[string]int
 }
 
-func NewSMTPServer(cfg Config, store *Store) *SMTPServer { return &SMTPServer{cfg: cfg, store: store} }
+func NewSMTPServer(cfg Config, store *Store) *SMTPServer {
+	return &SMTPServer{cfg: cfg, store: store, sessions: make(chan struct{}, maxSMTPConnections), sources: make(map[string]int)}
+}
 
 func (s *SMTPServer) ListenAndServe(ctx context.Context) error {
 	listener, err := net.Listen("tcp", s.cfg.SMTPAddr)
@@ -41,8 +61,70 @@ func (s *SMTPServer) ListenAndServe(ctx context.Context) error {
 				return err
 			}
 		}
-		go s.handle(conn)
+		select {
+		case s.sessions <- struct{}{}:
+			source, ok := s.acquireSource(conn.RemoteAddr())
+			if !ok {
+				<-s.sessions
+				s.rejectConnection(conn, "per_ip_limit")
+				continue
+			}
+			go func(conn net.Conn, source string) {
+				defer func() {
+					s.releaseSource(source)
+					<-s.sessions
+					if s.cfg.MetricsEnabled {
+						smtpConnections.Dec()
+					}
+				}()
+				if s.cfg.MetricsEnabled {
+					smtpConnections.Inc()
+				}
+				s.handle(conn)
+			}(conn, source)
+		default:
+			s.rejectConnection(conn, "global_limit")
+		}
 	}
+}
+
+func (s *SMTPServer) rejectConnection(conn net.Conn, reason string) {
+	if s.cfg.MetricsEnabled {
+		smtpRejections.WithLabelValues(reason).Inc()
+	}
+	// Do not allow a connection flood to create unbounded goroutines.
+	_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
+	_, _ = io.WriteString(conn, "421 too many concurrent connections\r\n")
+	_ = conn.Close()
+}
+
+func (s *SMTPServer) acquireSource(addr net.Addr) (string, bool) {
+	source := sourceAddress(addr)
+	s.sourceMu.Lock()
+	defer s.sourceMu.Unlock()
+	if s.sources[source] >= maxSMTPConnectionsPerIP {
+		return source, false
+	}
+	s.sources[source]++
+	return source, true
+}
+
+func (s *SMTPServer) releaseSource(source string) {
+	s.sourceMu.Lock()
+	defer s.sourceMu.Unlock()
+	if s.sources[source] <= 1 {
+		delete(s.sources, source)
+		return
+	}
+	s.sources[source]--
+}
+
+func sourceAddress(addr net.Addr) string {
+	host, _, err := net.SplitHostPort(addr.String())
+	if err == nil {
+		return host
+	}
+	return addr.String()
 }
 
 func (s *SMTPServer) Close() error {
@@ -56,7 +138,8 @@ func (s *SMTPServer) Close() error {
 
 func (s *SMTPServer) handle(conn net.Conn) {
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(2 * time.Minute))
+	refreshDeadline := func() { _ = conn.SetDeadline(time.Now().Add(smtpSessionTimeout)) }
+	refreshDeadline()
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
 	defer w.Flush()
@@ -66,13 +149,20 @@ func (s *SMTPServer) handle(conn net.Conn) {
 	var hasMail bool
 	var recipients []string
 	for {
-		line, err := r.ReadString('\n')
+		line, err := readSMTPLine(r, maxSMTPCommandLineBytes)
 		if err != nil {
+			if errors.Is(err, errSMTPLineTooLong) {
+				write(500, "command line too long")
+				if s.cfg.MetricsEnabled {
+					smtpRejections.WithLabelValues("command_line_limit").Inc()
+				}
+			}
 			if err != io.EOF {
 				log.Printf("SMTP read: %v", err)
 			}
 			return
 		}
+		refreshDeadline()
 		line = strings.TrimRight(line, "\r\n")
 		parts := strings.SplitN(line, " ", 2)
 		command := strings.ToUpper(parts[0])
@@ -109,7 +199,16 @@ func (s *SMTPServer) handle(conn net.Conn) {
 				write(550, "unknown recipient domain")
 				continue
 			}
-			recipients = append(recipients, address)
+			if len(recipients) >= maxSMTPRecipients {
+				write(452, "too many recipients")
+				if s.cfg.MetricsEnabled {
+					smtpRejections.WithLabelValues("recipient_limit").Inc()
+				}
+				continue
+			}
+			if !containsRecipient(recipients, address) {
+				recipients = append(recipients, address)
+			}
 			write(250, "recipient accepted")
 		case "DATA":
 			if len(recipients) == 0 {
@@ -117,17 +216,25 @@ func (s *SMTPServer) handle(conn net.Conn) {
 				continue
 			}
 			write(354, "end data with <CR><LF>.<CR><LF>")
-			raw, err := readData(r, s.cfg.MaxMessageBytes)
+			raw, err := readDataWithLimit(r, s.cfg.MaxMessageBytes, refreshDeadline)
 			if err != nil {
-				if strings.Contains(err.Error(), "too large") {
-					_ = drainData(r)
+				if errors.Is(err, errSMTPLineTooLong) {
+					write(552, "message line too long")
+					if s.cfg.MetricsEnabled {
+						smtpRejections.WithLabelValues("data_line_limit").Inc()
+					}
+				} else {
+					write(552, "message too large or malformed")
+					if s.cfg.MetricsEnabled {
+						smtpRejections.WithLabelValues("message_limit_or_malformed").Inc()
+					}
 				}
-				write(552, "message too large or malformed")
 				if s.cfg.MetricsEnabled {
 					smtpMessages.WithLabelValues("rejected").Inc()
 				}
-				sender, hasMail, recipients = "", false, nil
-				continue
+				// The remaining DATA stream is untrusted and unbounded; close rather
+				// than draining it and allowing the client to retain this session.
+				return
 			}
 			stored := true
 			for _, recipient := range recipients {
@@ -157,6 +264,15 @@ func (s *SMTPServer) handle(conn net.Conn) {
 	}
 }
 
+func containsRecipient(recipients []string, address string) bool {
+	for _, recipient := range recipients {
+		if recipient == address {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *SMTPServer) accepts(address string) bool {
 	at := strings.LastIndex(address, "@")
 	return at > 0 && strings.EqualFold(address[at+1:], s.cfg.MailDomain)
@@ -179,11 +295,18 @@ func smtpAddress(arg, prefix string) (string, bool) {
 }
 
 func readData(r *bufio.Reader, max int64) ([]byte, error) {
+	return readDataWithLimit(r, max, nil)
+}
+
+func readDataWithLimit(r *bufio.Reader, max int64, onRead func()) ([]byte, error) {
 	var result []byte
 	for {
-		line, err := r.ReadString('\n')
+		line, err := readSMTPLine(r, maxSMTPDataLineBytes)
 		if err != nil {
 			return nil, err
+		}
+		if onRead != nil {
+			onRead()
 		}
 		if line == ".\r\n" || line == ".\n" {
 			return result, nil
@@ -192,20 +315,29 @@ func readData(r *bufio.Reader, max int64) ([]byte, error) {
 			line = line[1:]
 		}
 		if int64(len(result)+len(line)) > max {
-			return nil, fmt.Errorf("too large")
+			return nil, errMessageTooLarge
 		}
 		result = append(result, line...)
 	}
 }
 
-func drainData(r *bufio.Reader) error {
+// readSMTPLine bounds allocation while consuming an SMTP line. A line that
+// exceeds the limit is fatal to the connection because the remainder is not a
+// valid command boundary.
+func readSMTPLine(r *bufio.Reader, max int) (string, error) {
+	line := make([]byte, 0, min(max, 4096))
 	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
-			return err
+		fragment, err := r.ReadSlice('\n')
+		if len(line)+len(fragment) > max {
+			return "", errSMTPLineTooLong
 		}
-		if line == ".\r\n" || line == ".\n" {
-			return nil
+		line = append(line, fragment...)
+		if err == nil {
+			return string(line), nil
 		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		return "", err
 	}
 }

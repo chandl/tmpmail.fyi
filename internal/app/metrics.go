@@ -15,6 +15,12 @@ var (
 	smtpMessageBytes = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "tmpmail", Name: "smtp_message_bytes_total", Help: "Bytes accepted through SMTP.",
 	})
+	smtpConnections = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "tmpmail", Name: "smtp_connections_active", Help: "SMTP sessions currently being handled.",
+	})
+	smtpRejections = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "tmpmail", Name: "smtp_rejections_total", Help: "SMTP rejections caused by protective limits.",
+	}, []string{"reason"})
 	httpRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tmpmail", Name: "http_requests_total", Help: "HTTP requests by normalized route and status.",
 	}, []string{"route", "status"})
@@ -42,7 +48,7 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(smtpMessages, smtpMessageBytes, httpRequests, httpDuration, cleanupMessages, cleanupBytes, storageBytes, storageMessages, storageErrors, cleanupErrors)
+	prometheus.MustRegister(smtpMessages, smtpMessageBytes, smtpConnections, smtpRejections, httpRequests, httpDuration, cleanupMessages, cleanupBytes, storageBytes, storageMessages, storageErrors, cleanupErrors)
 }
 
 func metricsHandler() http.Handler { return promhttp.Handler() }

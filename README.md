@@ -99,7 +99,7 @@ GET /openapi.json
 
 Set `METRICS_ENABLED=true` to start a dedicated Prometheus listener at `METRICS_ADDR`, which defaults to `127.0.0.1:9090`. It serves only `GET /metrics`; `GET /metrics` on the public UI/API listener returns `404`.
 
-The Compose file changes `METRICS_ADDR` to `:9090`, but does not publish it to the host, so a Prometheus container on the private Compose network can scrape `tmpmail:9090`. Do not add a public `9090` port mapping. Metrics cover SMTP outcomes and accepted bytes, normalized HTTP request counts and duration, cleanup activity, current stored message/byte usage, and storage or cleanup errors.
+The Compose file changes `METRICS_ADDR` to `:9090`, but does not publish it to the host, so a Prometheus container on the private Compose network can scrape `tmpmail:9090`. Do not add a public `9090` port mapping. Metrics cover SMTP outcomes, accepted bytes, active sessions, and limit rejections; normalized HTTP request counts and duration; cleanup activity; current stored message/byte usage; and storage or cleanup errors. Alert on sustained SMTP connection-limit or line-limit rejections.
 
 tmpmail logs successful SMTP receives, HTTP requests, and cleanup work. Logs do not include message bodies.
 

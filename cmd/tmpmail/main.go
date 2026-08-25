@@ -47,7 +47,7 @@ func main() {
 	go store.RunCleanup(ctx, time.Minute)
 
 	smtpServer := app.NewSMTPServer(cfg, store)
-	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: app.NewHTTPServer(cfg, store), ReadHeaderTimeout: 5 * time.Second}
+	httpServer := newHTTPServer(cfg.HTTPAddr, app.NewHTTPServer(cfg, store))
 
 	errCh := make(chan error, 3)
 	go func() { errCh <- smtpServer.ListenAndServe(ctx) }()
@@ -61,7 +61,7 @@ func main() {
 	}()
 	var metricsServer *http.Server
 	if cfg.MetricsEnabled {
-		metricsServer = &http.Server{Addr: cfg.MetricsAddr, Handler: app.NewMetricsServer(), ReadHeaderTimeout: 5 * time.Second}
+		metricsServer = newHTTPServer(cfg.MetricsAddr, app.NewMetricsServer())
 		go func() {
 			log.Printf("metrics listening on %s", cfg.MetricsAddr)
 			err := metricsServer.ListenAndServe()
@@ -94,4 +94,16 @@ func main() {
 		log.Printf("SMTP shutdown: %v", err)
 	}
 	fmt.Println("bye")
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      90 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
 }

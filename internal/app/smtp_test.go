@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"testing"
@@ -16,6 +17,51 @@ func TestReadDataDotUnstuffs(t *testing.T) {
 	}
 	if string(got) != "one\r\n.two\r\n" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestReadSMTPLineRejectsOversizedInputWithoutNewline(t *testing.T) {
+	input := bytes.Repeat([]byte("x"), maxSMTPCommandLineBytes+1)
+	_, err := readSMTPLine(bufio.NewReader(bytes.NewReader(input)), maxSMTPCommandLineBytes)
+	if !errors.Is(err, errSMTPLineTooLong) {
+		t.Fatalf("expected errSMTPLineTooLong, got %v", err)
+	}
+}
+
+func TestReadDataRejectsOversizedLine(t *testing.T) {
+	input := append(bytes.Repeat([]byte("x"), maxSMTPDataLineBytes+1), '\n')
+	_, err := readData(bufio.NewReader(bytes.NewReader(input)), int64(len(input)+1))
+	if !errors.Is(err, errSMTPLineTooLong) {
+		t.Fatalf("expected errSMTPLineTooLong, got %v", err)
+	}
+}
+
+func TestReadDataRejectsOversizedMessage(t *testing.T) {
+	_, err := readData(bufio.NewReader(bytes.NewBufferString("first\r\nsecond\r\n.\r\n")), 8)
+	if !errors.Is(err, errMessageTooLarge) {
+		t.Fatalf("expected errMessageTooLarge, got %v", err)
+	}
+}
+
+func TestSMTPPerSourceConnectionLimit(t *testing.T) {
+	server := NewSMTPServer(Config{}, nil)
+	address := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 2525}
+	var source string
+	for i := 0; i < maxSMTPConnectionsPerIP; i++ {
+		var ok bool
+		source, ok = server.acquireSource(address)
+		if !ok {
+			t.Fatalf("connection %d unexpectedly rejected", i+1)
+		}
+	}
+	if _, ok := server.acquireSource(address); ok {
+		t.Fatal("expected per-source connection limit")
+	}
+	for i := 0; i < maxSMTPConnectionsPerIP; i++ {
+		server.releaseSource(source)
+	}
+	if _, ok := server.acquireSource(address); !ok {
+		t.Fatal("expected released source slot to be reusable")
 	}
 }
 
