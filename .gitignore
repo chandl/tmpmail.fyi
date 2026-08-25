@@ -1,0 +1,19 @@
+# Runtime data (mail contents and SQLite state)
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Build and test output
+bin/
+coverage.out
+*.test
+
+# Local configuration
+.env
+.env.local
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
