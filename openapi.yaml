@@ -1,0 +1,115 @@
+openapi: 3.1.0
+info:
+  title: tmpmail API
+  version: 0.1.0
+  description: |
+    Read-only API for temporary inbound mail. All messages expire automatically,
+    normally one hour after receipt. There is no outbound email API.
+servers:
+  - url: https://mail.example.com
+    description: Replace with your tmpmail domain.
+paths:
+  /healthz:
+    get:
+      operationId: healthcheck
+      summary: Check whether the HTTP service is responsive
+      responses:
+        '204':
+          description: Service is healthy.
+  /api/inboxes/{inbox}:
+    get:
+      operationId: listInboxMessages
+      summary: List active messages for an inbox
+      parameters:
+        - $ref: '#/components/parameters/Inbox'
+      responses:
+        '200':
+          description: Messages currently retained for the inbox, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MessageSummary'
+        '500':
+          $ref: '#/components/responses/StorageError'
+  /api/messages/{id}:
+    get:
+      operationId: getMessage
+      summary: Retrieve one active message, including its original RFC 822 source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The opaque message ID returned by the inbox endpoint.
+          schema:
+            type: string
+            pattern: '^[a-f0-9]{32}$'
+      responses:
+        '200':
+          description: The active message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '404':
+          description: The message does not exist or has expired.
+        '500':
+          $ref: '#/components/responses/StorageError'
+components:
+  parameters:
+    Inbox:
+      name: inbox
+      in: path
+      required: true
+      description: Full recipient email address, URL-encoded when necessary.
+      schema:
+        type: string
+        format: email
+        example: build-482@mail.example.com
+  schemas:
+    MessageSummary:
+      type: object
+      required: [id, recipient, from, subject, received, expiresAt, size]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-f0-9]{32}$'
+          example: 7543ecea3e034ec5bd7819eddec764d9
+        recipient:
+          type: string
+          format: email
+          example: build-482@mail.example.com
+        from:
+          type: string
+          example: sender@example.org
+        subject:
+          type: string
+          example: Your verification code
+        received:
+          type: string
+          format: date-time
+          example: '2026-08-25T20:15:00Z'
+        expiresAt:
+          type: string
+          format: date-time
+          example: '2026-08-25T21:15:00Z'
+        size:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Raw message size in bytes.
+          example: 843
+    Message:
+      allOf:
+        - $ref: '#/components/schemas/MessageSummary'
+        - type: object
+          required: [body]
+          properties:
+            body:
+              type: string
+              description: Original raw RFC 822/MIME message, including headers.
+              example: "From: sender@example.org\r\nSubject: Your verification code\r\n\r\n123456"
+  responses:
+    StorageError:
+      description: The message store could not be read.
