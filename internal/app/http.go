@@ -23,6 +23,21 @@ func NewHTTPServer(cfg Config, store *Store) http.Handler {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		_, _ = w.Write([]byte(uiScript))
 	})
+	mux.HandleFunc("GET /ui/messages/{id}/html", func(w http.ResponseWriter, r *http.Request) {
+		message, err := store.Get(r.PathValue("id"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		content := parseEmail(message.Body).HTML
+		if content == "" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'none'; style-src 'unsafe-inline'")
+		_, _ = w.Write([]byte(content))
+	})
 	api.HandlerFromMux(&apiServer{store: store}, mux)
 	mux.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, _ *http.Request) {
 		specification, err := api.GetSpecJSON()
@@ -146,7 +161,7 @@ func requestLogger(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		log.Printf("web request method=%s path=%s status=%d remote=%s duration=%s", r.Method, r.URL.Path, status, r.RemoteAddr, time.Since(started).Round(time.Millisecond))
+		log.Printf("[web] method=%s path=%s status=%d remote=%s duration=%s", r.Method, r.URL.Path, status, r.RemoteAddr, time.Since(started).Round(time.Millisecond))
 	})
 }
 
@@ -180,8 +195,8 @@ func renderInbox(w http.ResponseWriter, store *Store, domain, inboxName string, 
 		for i := range messages {
 			full, err := store.Get(messages[i].ID)
 			if err == nil {
-				headers, body := splitRawMessage(full.Body)
-				data.Messages = append(data.Messages, inboxMessage{Message: messages[i], Headers: headers, Body: body})
+				parsed := parseEmail(full.Body)
+				data.Messages = append(data.Messages, inboxMessage{Message: messages[i], Headers: parsed.Headers, Body: parsed.Text})
 			}
 		}
 	}

@@ -135,7 +135,7 @@ func (s *SMTPServer) handle(conn net.Conn) {
 					stored = false
 					break
 				}
-				log.Printf("received message id=%s recipient=%s sender=%s bytes=%d", message.ID, message.Recipient, sender, message.Size)
+				log.Printf("[smtp receive] id=%s recipient=%s sender=%s bytes=%d", message.ID, message.Recipient, sender, message.Size)
 			}
 			if stored {
 				write(250, "message accepted")

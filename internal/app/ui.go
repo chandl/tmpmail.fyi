@@ -1,7 +1,7 @@
 package app
 
 const uiCSS = `
-.random{background:#263554!important;color:#dce5f8!important}.random:hover{background:#334365!important}.mailbox{display:grid;grid-template-columns:270px minmax(0,1fr);min-height:470px;margin:18px -22px -22px;border-top:1px solid #263554}.message-list{overflow:auto;padding:9px;border-right:1px solid #263554;background:#0e1628}.message-item{display:block;width:100%;border:0;border-radius:9px;background:transparent;color:#c7d2e8;padding:11px;text-align:left;cursor:pointer}.message-item:hover{background:#17233b}.message-item.active{background:#263b62;color:#fff}.message-item-subject{display:block;overflow:hidden;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.message-item-meta{display:block;margin-top:3px;color:#8fa0c1;font-size:12px}.message-item-preview{display:-webkit-box;overflow:hidden;margin-top:5px;color:#9aa7bf;font-size:12px;line-height:1.35;-webkit-box-orient:vertical;-webkit-line-clamp:2}.message-reader{min-width:0;background:#121a2d}.mailbox .message{display:none;border:0;margin:0;padding:22px}.mailbox .message.active{display:block}.mailbox .subject{font-size:20px;letter-spacing:-.02em}.mailbox .details{margin-top:8px;padding-bottom:16px;border-bottom:1px solid #263554}.mailbox .section-label{margin-top:20px}.mailbox .message pre{min-height:150px;background:#0e1628}.mailbox details pre{min-height:auto}.pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:14px 0 0}.pagination a{border:1px solid #334365;border-radius:7px;color:#cbd6ec;padding:5px 9px;text-decoration:none;font-size:12px}.pagination a:hover{background:#202d48}@media(max-width:700px){.mailbox{display:block;margin:18px -16px -16px}.message-list{max-height:220px;border-right:0;border-bottom:1px solid #263554}.mailbox .message{padding:16px}.mailbox .subject{font-size:18px}}
+.random{background:#263554!important;color:#dce5f8!important}.random:hover{background:#334365!important}.html-toggle{margin-top:14px;background:#263554!important;color:#dce5f8!important;padding:6px 10px!important;font-size:12px!important}.html-frame{width:100%;min-height:360px;margin-top:12px;border:1px solid #263554;border-radius:8px;background:#fff}.mailbox{display:grid;grid-template-columns:270px minmax(0,1fr);min-height:470px;margin:18px -22px -22px;border-top:1px solid #263554}.message-list{overflow:auto;padding:9px;border-right:1px solid #263554;background:#0e1628}.message-item{display:block;width:100%;border:0;border-radius:9px;background:transparent;color:#c7d2e8;padding:11px;text-align:left;cursor:pointer}.message-item:hover{background:#17233b}.message-item.active{background:#263b62;color:#fff}.message-item-subject{display:block;overflow:hidden;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.message-item-meta{display:block;margin-top:3px;color:#8fa0c1;font-size:12px}.message-item-preview{display:-webkit-box;overflow:hidden;margin-top:5px;color:#9aa7bf;font-size:12px;line-height:1.35;-webkit-box-orient:vertical;-webkit-line-clamp:2}.message-reader{min-width:0;background:#121a2d}.mailbox .message{display:none;border:0;margin:0;padding:22px}.mailbox .message.active{display:block}.mailbox .subject{font-size:20px;letter-spacing:-.02em}.mailbox .details{margin-top:8px;padding-bottom:16px;border-bottom:1px solid #263554}.mailbox .section-label{margin-top:20px}.mailbox .message pre{min-height:150px;background:#0e1628}.mailbox details pre{min-height:auto}.pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:14px 0 0}.pagination a{border:1px solid #334365;border-radius:7px;color:#cbd6ec;padding:5px 9px;text-decoration:none;font-size:12px}.pagination a:hover{background:#202d48}@media(max-width:700px){.mailbox{display:block;margin:18px -16px -16px}.message-list{max-height:220px;border-right:0;border-bottom:1px solid #263554}.mailbox .message{padding:16px}.mailbox .subject{font-size:18px}}
 `
 
 const uiScript = `
@@ -84,7 +84,27 @@ const uiScript = `
     fetch('/api/inboxes/' + encodeURIComponent(address) + '?limit=25&offset=' + offset)
       .then(response => response.ok ? response.json() : null)
       .then(page => {
-        if (!page || (!page.hasMore && offset === 0)) return;
+        if (!page) return;
+        page.messages.forEach((item, index) => {
+          const message = messages[index];
+          if (!message) return;
+          const toggle = document.createElement('button');
+          toggle.type = 'button';
+          toggle.className = 'html-toggle';
+          toggle.textContent = 'View HTML';
+          toggle.addEventListener('click', async () => {
+            const url = '/ui/messages/' + encodeURIComponent(item.id) + '/html';
+            const response = await fetch(url);
+            if (!response.ok) { toggle.textContent = 'No HTML version'; return; }
+            const frame = document.createElement('iframe');
+            frame.className = 'html-frame';
+            frame.sandbox = '';
+            frame.src = url;
+            toggle.replaceWith(frame);
+          });
+          message.querySelector('.details')?.after(toggle);
+        });
+        if (!page.hasMore && offset === 0) return;
         const navigation = document.createElement('nav');
         navigation.className = 'pagination';
         navigation.setAttribute('aria-label', 'Inbox pages');
