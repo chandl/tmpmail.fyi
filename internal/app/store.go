@@ -66,12 +66,23 @@ func OpenStore(dbPath, msgDir string, cfg Config) (*Store, error) {
 			return nil, err
 		}
 	}
-	return &Store{db: db, msgDir: msgDir, cfg: cfg}, nil
+	store := &Store{db: db, msgDir: msgDir, cfg: cfg}
+	if cfg.MetricsEnabled {
+		if err := store.updateStorageMetrics(); err != nil {
+			storageErrors.WithLabelValues("metrics").Inc()
+		}
+	}
+	return store, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) Save(recipient, sender string, raw []byte) (Message, error) {
+func (s *Store) Save(recipient, sender string, raw []byte) (message Message, err error) {
+	defer func() {
+		if err != nil && s.cfg.MetricsEnabled {
+			storageErrors.WithLabelValues("save").Inc()
+		}
+	}()
 	if int64(len(raw)) > s.cfg.MaxMessageBytes {
 		return Message{}, fmt.Errorf("message exceeds %d byte limit", s.cfg.MaxMessageBytes)
 	}
@@ -81,7 +92,7 @@ func (s *Store) Save(recipient, sender string, raw []byte) (Message, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	now := time.Now().UTC()
-	message := Message{ID: newID(), Recipient: recipient, From: sender, Received: now, ExpiresAt: now.Add(s.cfg.MessageTTL), Size: int64(len(raw))}
+	message = Message{ID: newID(), Recipient: recipient, From: sender, Received: now, ExpiresAt: now.Add(s.cfg.MessageTTL), Size: int64(len(raw))}
 	message.Subject, message.From = mailDetails(raw, sender)
 	path := filepath.Join(s.msgDir, message.ID+".eml")
 	tmp, err := os.CreateTemp(s.msgDir, ".incoming-*")
@@ -110,7 +121,12 @@ func (s *Store) Save(recipient, sender string, raw []byte) (Message, error) {
 	if err != nil {
 		return Message{}, err
 	}
-	logCleanup(stats)
+	logCleanup(stats, s.cfg.MetricsEnabled)
+	if s.cfg.MetricsEnabled {
+		if err := s.updateStorageMetrics(); err != nil {
+			storageErrors.WithLabelValues("metrics").Inc()
+		}
+	}
 	return message, nil
 }
 
@@ -179,9 +195,26 @@ func (s *Store) Cleanup() error {
 	defer s.writeMu.Unlock()
 	stats, err := s.cleanupLocked(time.Now().Unix())
 	if err == nil {
-		logCleanup(stats)
+		logCleanup(stats, s.cfg.MetricsEnabled)
+		if s.cfg.MetricsEnabled {
+			if err := s.updateStorageMetrics(); err != nil {
+				storageErrors.WithLabelValues("metrics").Inc()
+			}
+		}
+	} else if s.cfg.MetricsEnabled {
+		storageErrors.WithLabelValues("cleanup").Inc()
+		cleanupErrors.Inc()
 	}
 	return err
+}
+
+func (s *Store) updateStorageMetrics() error {
+	var bytes, messages int64
+	if err := s.db.QueryRow("SELECT COALESCE(SUM(size), 0), COUNT(*) FROM messages").Scan(&bytes, &messages); err != nil {
+		return err
+	}
+	observeStorageUsage(bytes, messages)
+	return nil
 }
 
 func (s *Store) enforceLimitLocked() (cleanupStats, error) {
@@ -249,12 +282,15 @@ func (s *Store) cleanupLocked(before int64) (cleanupStats, error) {
 	return stats, nil
 }
 
-func logCleanup(stats cleanupStats) {
+func logCleanup(stats cleanupStats, metricsEnabled bool) {
 	if stats.Expired > 0 {
 		log.Printf("cleanup expired_messages=%d reclaimed_bytes=%d", stats.Expired, stats.ExpiredBytes)
 	}
 	if stats.Evicted > 0 {
 		log.Printf("cleanup storage_evicted=%d reclaimed_bytes=%d", stats.Evicted, stats.EvictedBytes)
+	}
+	if metricsEnabled {
+		observeCleanup(stats)
 	}
 }
 

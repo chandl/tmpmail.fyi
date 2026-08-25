@@ -7,9 +7,12 @@ services:
       DATA_DIR: /data
       SMTP_ADDR: :2525
       HTTP_ADDR: :8080
+      # Metrics are not published to the host. Keep this private to the Compose network.
+      METRICS_ADDR: :9090
       MESSAGE_TTL: 1h
       MAX_MESSAGE_BYTES: 2097152
       MAX_STORAGE_BYTES: 21474836480
+      METRICS_ENABLED: "false"
     ports:
       - "25:2525"
       - "8080:8080"

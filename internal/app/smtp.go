@@ -123,6 +123,9 @@ func (s *SMTPServer) handle(conn net.Conn) {
 					_ = drainData(r)
 				}
 				write(552, "message too large or malformed")
+				if s.cfg.MetricsEnabled {
+					smtpMessages.WithLabelValues("rejected").Inc()
+				}
 				sender, hasMail, recipients = "", false, nil
 				continue
 			}
@@ -132,10 +135,17 @@ func (s *SMTPServer) handle(conn net.Conn) {
 				if err != nil {
 					log.Printf("store message: %v", err)
 					write(451, "temporary storage failure")
+					if s.cfg.MetricsEnabled {
+						smtpMessages.WithLabelValues("failed").Inc()
+					}
 					stored = false
 					break
 				}
 				log.Printf("[smtp receive] id=%s recipient=%s sender=%s bytes=%d", message.ID, message.Recipient, sender, message.Size)
+				if s.cfg.MetricsEnabled {
+					smtpMessages.WithLabelValues("accepted").Inc()
+					smtpMessageBytes.Add(float64(message.Size))
+				}
 			}
 			if stored {
 				write(250, "message accepted")

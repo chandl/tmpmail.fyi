@@ -13,9 +13,11 @@ type Config struct {
 	DataDir         string
 	SMTPAddr        string
 	HTTPAddr        string
+	MetricsAddr     string
 	MessageTTL      time.Duration
 	MaxMessageBytes int64
 	MaxStorageBytes int64
+	MetricsEnabled  bool
 }
 
 func LoadConfig() (Config, error) {
@@ -35,7 +37,7 @@ func LoadConfig() (Config, error) {
 	if domain == "" || strings.ContainsAny(domain, "@ /\\") {
 		return Config{}, fmt.Errorf("MAIL_DOMAIN must be a domain name")
 	}
-	return Config{domain, env("DATA_DIR", "/data"), env("SMTP_ADDR", ":25"), env("HTTP_ADDR", ":8080"), ttl, maxMessage, maxStorage}, nil
+	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MetricsEnabled: env("METRICS_ENABLED", "false") == "true"}, nil
 }
 
 func env(key, fallback string) string {

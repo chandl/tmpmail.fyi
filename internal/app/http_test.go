@@ -63,6 +63,21 @@ func TestServesMailClientUIAssets(t *testing.T) {
 	}
 }
 
+func TestMetricsEndpointRequiresOptIn(t *testing.T) {
+	store := testStore(t, time.Hour)
+	public := httptest.NewRecorder()
+	NewHTTPServer(Config{MailDomain: "mail.test", MetricsEnabled: true}, store).ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if public.Code != http.StatusNotFound {
+		t.Fatalf("the public server must not serve metrics, got %d", public.Code)
+	}
+
+	enabled := httptest.NewRecorder()
+	NewMetricsServer().ServeHTTP(enabled, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if enabled.Code != http.StatusOK || !strings.Contains(enabled.Body.String(), "tmpmail_smtp_message_bytes_total") {
+		t.Fatalf("expected Prometheus metrics, got status=%d body=%q", enabled.Code, enabled.Body.String())
+	}
+}
+
 func TestContentSecurityPolicyAllowsUIAssets(t *testing.T) {
 	store := testStore(t, time.Hour)
 	response := httptest.NewRecorder()

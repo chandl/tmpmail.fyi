@@ -49,7 +49,7 @@ func main() {
 	smtpServer := app.NewSMTPServer(cfg, store)
 	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: app.NewHTTPServer(cfg, store), ReadHeaderTimeout: 5 * time.Second}
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() { errCh <- smtpServer.ListenAndServe(ctx) }()
 	go func() {
 		log.Printf("HTTP listening on %s", cfg.HTTPAddr)
@@ -59,6 +59,18 @@ func main() {
 		}
 		errCh <- err
 	}()
+	var metricsServer *http.Server
+	if cfg.MetricsEnabled {
+		metricsServer = &http.Server{Addr: cfg.MetricsAddr, Handler: app.NewMetricsServer(), ReadHeaderTimeout: 5 * time.Second}
+		go func() {
+			log.Printf("metrics listening on %s", cfg.MetricsAddr)
+			err := metricsServer.ListenAndServe()
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			errCh <- err
+		}()
+	}
 
 	select {
 	case <-ctx.Done():
@@ -72,6 +84,11 @@ func main() {
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("HTTP shutdown: %v", err)
+	}
+	if metricsServer != nil {
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("metrics shutdown: %v", err)
+		}
 	}
 	if err := smtpServer.Close(); err != nil {
 		log.Printf("SMTP shutdown: %v", err)

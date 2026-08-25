@@ -10,10 +10,10 @@ It is designed to be one service on a small VPS—not a replacement for a produc
 - Never send outbound mail.
 - Provide a small browser inbox and JSON API for listing and reading messages.
 - Retain messages for **one hour** by default, then delete them automatically.
-- Enforce message-size, mailbox-size, and global-disk limits so a traffic spike cannot exhaust the host.
+- Enforce per-message and global-storage limits so a traffic spike cannot exhaust the host.
 - Run as a single binary (or one container), with no database service to operate.
 
-## Proposed architecture
+## Architecture
 
 ```text
 Internet sender
@@ -25,9 +25,12 @@ tmpmail (one Go process)
   ├─ SQLite (WAL mode): mailbox/message metadata and indexes
   ├─ /data/messages/*.eml: original raw MIME messages
   ├─ cleanup worker: one-hour TTL and disk-cap eviction
-  └─ HTTP app: browser inbox and JSON API
+  ├─ HTTP app: browser inbox and JSON API
+	 ▲
+	 └─ HTTP :8080 (public)
+  └─ Prometheus listener: /metrics (optional, separate port)
          ▲
-         └─ HTTP :8080
+         └─ metrics :9090 (localhost by default)
 ```
 
 SQLite stores metadata such as recipient, sender, subject, size, receive time, expiry, and raw-message path. It uses the `github.com/mattn/go-sqlite3` driver, compiled into the application during the Docker build. Raw `.eml` files preserve the original message for debugging while keeping the database small. No Postgres, Redis, queue broker, or object store is required for the initial deployment.
@@ -47,12 +50,24 @@ MAIL_DOMAIN=mail.example.com
 DATA_DIR=/data
 SMTP_ADDR=:25
 HTTP_ADDR=:8080
+METRICS_ADDR=127.0.0.1:9090
 MESSAGE_TTL=1h
 MAX_MESSAGE_BYTES=2097152
 MAX_STORAGE_BYTES=21474836480
+METRICS_ENABLED=false # Start the separate metrics listener when true.
 ```
 
-`MAX_STORAGE_BYTES` is a hard global cap; once reached, cleanup evicts expired messages first, then oldest messages if necessary. Exact defaults will be finalized with the implementation and deployment guide.
+`MAX_MESSAGE_BYTES` defaults to 2 MiB and `MAX_STORAGE_BYTES` defaults to 20 GiB. The global storage cap is enforced on every save: expired messages are removed first, then the oldest messages are evicted when necessary. A cleanup job also runs at startup and every minute.
+
+`MAIL_DOMAIN` is required. Only recipients at that domain are accepted; every local part is a valid disposable inbox.
+
+## Inbox UI and message rendering
+
+Open the UI with an inbox local part, for example `/?inbox=build-482`. The UI appends `@MAIL_DOMAIN`; do not enter a domain in the inbox field. When no inbox is selected it creates a word-based random inbox name. The last selected inbox is retained in browser local storage.
+
+The UI provides an inbox list, pagination, refresh, random-inbox, and copy-address controls. It displays browser-local timestamps and clearly separates message headers from the body.
+
+Messages are stored unchanged as raw `.eml` files. For the reader, tmpmail parses MIME multipart messages, prefers `text/plain`, and offers a **View HTML** option when an HTML part is present. HTML is sanitized and rendered in a sandboxed iframe; remote images are blocked.
 
 ## Local development
 
@@ -65,6 +80,12 @@ docker compose up --build
 
 Send SMTP mail to `localhost:25`; open `http://localhost:8080/?inbox=build` to inspect it. The browser UI appends the configured mail domain automatically.
 
+To run without Docker, provide `MAIL_DOMAIN` and a writable data directory:
+
+```sh
+MAIL_DOMAIN=mail.example.com DATA_DIR=./data SMTP_ADDR=:2525 go run ./cmd/tmpmail
+```
+
 The API is intentionally small:
 
 ```text
@@ -73,6 +94,14 @@ GET /api/inboxes/{full-recipient-address}?limit=25&offset=0
 GET /api/messages/{message-id}
 GET /openapi.json
 ```
+
+## Metrics and logs
+
+Set `METRICS_ENABLED=true` to start a dedicated Prometheus listener at `METRICS_ADDR`, which defaults to `127.0.0.1:9090`. It serves only `GET /metrics`; `GET /metrics` on the public UI/API listener returns `404`.
+
+The Compose file changes `METRICS_ADDR` to `:9090`, but does not publish it to the host, so a Prometheus container on the private Compose network can scrape `tmpmail:9090`. Do not add a public `9090` port mapping. Metrics cover SMTP outcomes and accepted bytes, normalized HTTP request counts and duration, cleanup activity, current stored message/byte usage, and storage or cleanup errors.
+
+tmpmail logs successful SMTP receives, HTTP requests, and cleanup work. Logs do not include message bodies.
 
 The complete contract is in [openapi.yaml](openapi.yaml).
 
@@ -84,34 +113,34 @@ checked in; regenerate it whenever the API contract changes.
 
 1. Provision a VPS with persistent disk and a public IPv4 address.
 2. Create an `A` record for `mail.example.com` and an MX record pointing at it.
-3. Allow inbound TCP 25 for SMTP and TCP 8080 for the inbox UI.
+3. Allow inbound TCP 25 for SMTP and TCP 8080 (or a reverse proxy on 443) for the inbox UI. Do not allow inbound TCP 9090.
 4. Run tmpmail with a persistent `/data` volume.
 5. Open the inbox UI at `http://your-vps:8080`. Add a reverse proxy later if you want HTTPS on port 443.
 
 The service accepts inbound mail only; reverse DNS and outbound-email reputation are not in scope.
 
-## Docker plan
+## Docker
 
 Docker is a packaging and deployment convenience, not an additional service dependency. The production shape remains one `tmpmail` process plus a persistent local data directory.
 
 ### Image
 
-- Use a multi-stage build: compile a static Linux Go binary in the build stage, then copy it into a small non-root Alpine runtime image.
+- Use a multi-stage build: compile the CGO SQLite build in the builder, then copy the binary into a small non-root Alpine runtime image.
 - Include no database server or application runtime in the final image.
-- Expose TCP `25` for SMTP and TCP `8080` for the internal HTTP server.
+- Expose TCP `25` for SMTP, `8080` for HTTP, and `9090` for the optional metrics listener. `EXPOSE` does not publish a port.
 - Add a health endpoint and Docker `HEALTHCHECK` that verifies the HTTP process is responsive.
 - Run as an unprivileged user. The container listens on port 2525 and Docker maps host port 25 to it, avoiding the need for a privileged port capability.
 
 ### Compose deployment
 
-The initial `compose.yaml` will contain only:
+The included `compose.yaml` contains one service:
 
 ```text
 tmpmail
-  image: tmpmail
-  ports: 25:2525
+  image: ghcr.io/chandl/tmpmail.fyi:latest
+  ports: 25:2525, 8080:8080
   volumes: tmpmail-data:/data
-  environment: MAIL_DOMAIN, MESSAGE_TTL=1h, storage and message limits
+  environment: MAIL_DOMAIN, addresses, TTL, limits, and optional metrics settings
   restart: unless-stopped
 ```
 
@@ -132,23 +161,14 @@ The included Compose file serves the UI directly on port `8080` over HTTP. To us
 
 GitHub Actions tests every pull request and builds a multi-architecture (`linux/amd64`, `linux/arm64`) container image. Pushes to `main` publish `ghcr.io/chandl/tmpmail.fyi:latest` and a branch/SHA tag; version tags such as `v0.1.0` also publish the matching version tag. The workflow is [`.github/workflows/container.yml`](.github/workflows/container.yml).
 
-## Implementation plan
-
-1. Create the Go service skeleton and configuration validation.
-2. Implement SMTP intake, recipient-domain validation, size limits, and durable persistence.
-3. Implement SQLite schema, raw-message storage, recovery behavior, expiry cleanup, and disk-cap eviction.
-4. Implement inbox UI plus JSON endpoints for inbox and message retrieval.
-5. Add the multi-stage Dockerfile, Compose configuration, health checks, metrics/logging, and VPS setup documentation.
-6. Add SMTP/API/persistence/retention tests and a load-test harness; benchmark before setting a supported rate.
-
 ## Non-goals for v1
 
 - Outbound email or reply support
 - User accounts, passwords, or multi-tenant administration
-- Spam filtering, antivirus, attachment previews, or full MIME rendering
+- Spam filtering, antivirus, or attachment previews
 - Guaranteed delivery or archival storage
 - High availability across multiple machines
 
 ## Status
 
-Initial implementation is present. It still needs a Go or Docker-capable environment for compile, integration, and load verification.
+The service, unit tests, container build, Compose configuration, and container-publishing workflow are present. Before relying on a particular messages-per-second target, run a load test on the intended VPS and tune based on observed disk and SQLite performance.

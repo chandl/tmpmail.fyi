@@ -23,6 +23,7 @@ func NewHTTPServer(cfg Config, store *Store) http.Handler {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		_, _ = w.Write([]byte(uiScript))
 	})
+	mux.HandleFunc("GET /metrics", http.NotFound)
 	mux.HandleFunc("GET /ui/messages/{id}/html", func(w http.ResponseWriter, r *http.Request) {
 		message, err := store.Get(r.PathValue("id"))
 		if err != nil {
@@ -51,7 +52,14 @@ func NewHTTPServer(cfg Config, store *Store) http.Handler {
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		renderInbox(w, store, cfg.MailDomain, strings.TrimSpace(r.URL.Query().Get("inbox")), pageOffset(r.URL.Query().Get("offset")))
 	})
-	return requestLogger(securityHeaders(mux))
+	return requestLogger(securityHeaders(mux), cfg.MetricsEnabled)
+}
+
+// NewMetricsServer serves only the Prometheus scrape endpoint.
+func NewMetricsServer() http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", metricsHandler())
+	return mux
 }
 
 type apiServer struct{ store *Store }
@@ -152,7 +160,7 @@ func (r *responseRecorder) Write(body []byte) (int, error) {
 	return r.ResponseWriter.Write(body)
 }
 
-func requestLogger(next http.Handler) http.Handler {
+func requestLogger(next http.Handler, metricsEnabled bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		recorder := &responseRecorder{ResponseWriter: w}
@@ -161,7 +169,11 @@ func requestLogger(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		log.Printf("[web] method=%s path=%s status=%d remote=%s duration=%s", r.Method, r.URL.Path, status, r.RemoteAddr, time.Since(started).Round(time.Millisecond))
+		elapsed := time.Since(started)
+		log.Printf("[web] method=%s path=%s status=%d remote=%s duration=%s", r.Method, r.URL.Path, status, r.RemoteAddr, elapsed.Round(time.Millisecond))
+		if metricsEnabled {
+			observeHTTP(metricRoute(r.URL.Path), strconv.Itoa(status), elapsed.Seconds())
+		}
 	})
 }
 
