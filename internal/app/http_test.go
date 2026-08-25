@@ -21,8 +21,21 @@ func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("got status %d", response.Code)
 	}
-	if !strings.Contains(response.Body.String(), "build@mail.test") {
-		t.Fatalf("expected resolved inbox address, got %q", response.Body.String())
+	page := response.Body.String()
+	if !strings.Contains(page, "build@mail.test") {
+		t.Fatalf("expected resolved inbox address, got %q", page)
+	}
+	if !strings.Contains(page, "Message headers") || !strings.Contains(page, "body") {
+		t.Fatalf("expected separate message sections, got %q", page)
+	}
+	if !strings.Contains(page, "tmpmail:last-inbox") {
+		t.Fatalf("expected last inbox browser storage, got %q", page)
+	}
+	if !strings.Contains(page, "Copy address") || !strings.Contains(page, "randomInbox") {
+		t.Fatalf("expected generated inbox and copy controls, got %q", page)
+	}
+	if !strings.Contains(page, "local-time") {
+		t.Fatalf("expected browser-local timestamps, got %q", page)
 	}
 }
 

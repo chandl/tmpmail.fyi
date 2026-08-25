@@ -6,7 +6,7 @@ info:
     Read-only API for temporary inbound mail. All messages expire automatically,
     normally one hour after receipt. There is no outbound email API.
 servers:
-  - url: https://mail.example.com
+  - url: https://tmpmail.fyi
     description: Replace with your tmpmail domain.
 paths:
   /healthz:
@@ -66,7 +66,7 @@ components:
       schema:
         type: string
         format: email
-        example: build-482@mail.example.com
+        example: build-482@tmpmail.fyi
   schemas:
     MessageSummary:
       type: object
@@ -79,7 +79,7 @@ components:
         recipient:
           type: string
           format: email
-          example: build-482@mail.example.com
+          example: build-482@tmpmail.fyi
         from:
           type: string
           example: sender@example.org

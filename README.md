@@ -27,7 +27,7 @@ tmpmail (one Go process)
   ├─ cleanup worker: one-hour TTL and disk-cap eviction
   └─ HTTP app: browser inbox and JSON API
          ▲
-         └─ HTTPS :443 through Traefik
+         └─ HTTP :8080
 ```
 
 SQLite stores metadata such as recipient, sender, subject, size, receive time, expiry, and raw-message path. It uses the `github.com/mattn/go-sqlite3` driver, compiled into the application during the Docker build. Raw `.eml` files preserve the original message for debugging while keeping the database small. No Postgres, Redis, queue broker, or object store is required for the initial deployment.
@@ -59,12 +59,11 @@ MAX_STORAGE_BYTES=21474836480
 The application uses Go 1.27.0 and a C compiler for local development builds, or Docker for a runtime that does not have either installed.
 
 ```sh
-cp .env.example .env
-# edit MAIL_DOMAIN in .env
+# Edit MAIL_DOMAIN in compose.yaml.
 docker compose up --build
 ```
 
-Send SMTP mail to `localhost:25`; open `https://mail.example.com/?inbox=build` to inspect it once Traefik has issued the certificate. The browser UI appends the configured mail domain automatically. For local HTTP-only development, temporarily add `127.0.0.1:8080:8080` to the `tmpmail` port mappings.
+Send SMTP mail to `localhost:25`; open `http://localhost:8080/?inbox=build` to inspect it. The browser UI appends the configured mail domain automatically.
 
 The API is intentionally small:
 
@@ -85,9 +84,9 @@ checked in; regenerate it whenever the API contract changes.
 
 1. Provision a VPS with persistent disk and a public IPv4 address.
 2. Create an `A` record for `mail.example.com` and an MX record pointing at it.
-3. Allow inbound TCP 25 for SMTP and TCP 443 for the inbox UI.
+3. Allow inbound TCP 25 for SMTP and TCP 8080 for the inbox UI.
 4. Run tmpmail with a persistent `/data` volume.
-5. Run Traefik to provide HTTPS and forward web traffic to tmpmail.
+5. Open the inbox UI at `http://your-vps:8080`. Add a reverse proxy later if you want HTTPS on port 443.
 
 The service accepts inbound mail only; reverse DNS and outbound-email reputation are not in scope.
 
@@ -108,40 +107,26 @@ Docker is a packaging and deployment convenience, not an additional service depe
 The initial `compose.yaml` will contain only:
 
 ```text
-traefik
-  image: traefik
-  ports: 80:80, 443:443
-  volumes: read-only Docker socket, traefik-data:/letsencrypt
-
 tmpmail
   image: tmpmail
   ports: 25:2525
   volumes: tmpmail-data:/data
-  labels: HTTPS router for MAIL_DOMAIN
   environment: MAIL_DOMAIN, MESSAGE_TTL=1h, storage and message limits
   restart: unless-stopped
 ```
 
-The named volume holds both `mail.db` and raw `.eml` message files, so container recreation does not remove mail. Configuration belongs in an `.env` file that is excluded from Git.
+The named volume holds both `mail.db` and raw `.eml` message files, so container recreation does not remove mail. Configuration is kept directly in `compose.yaml` for this minimal deployment.
 
-### HTTPS with Traefik
+### HTTPS (optional)
 
-The Compose deployment includes Traefik. It discovers tmpmail from Docker labels, obtains and renews a Let's Encrypt certificate using the configured `TRAEFIK_ACME_EMAIL`, and forwards HTTPS traffic internally to port `8080`. Tmpmail's HTTP port is not exposed on the host.
-
-Traefik needs read-only access to the Docker socket for service discovery and a persistent `traefik-data` volume for ACME certificate state. Port 80 is exposed for normal HTTP reachability; port 443 serves the inbox UI.
-
-```text
-Internet
-  ├─ TCP 25 ──────────────────────► tmpmail SMTP
-  └─ TCP 80/443 ─► Traefik ──────► tmpmail HTTP on Docker network
-```
+The included Compose file serves the UI directly on port `8080` over HTTP. To use HTTPS, place your preferred reverse proxy in front of `http://127.0.0.1:8080`; certificate management is deliberately outside this minimal deployment.
 
 ### Operations
 
 - Back up the mounted data volume (or at minimum `mail.db`) only if short-lived debugging history is valuable; the one-hour TTL means backups are optional.
 - Limit container memory and disk through host/volume monitoring; application-level limits remain the primary safeguard.
 - Use `docker compose pull && docker compose up -d` for upgrades after providing a tagged image.
-- Do not expose port `8080` directly to the public Internet in production.
+- Do not expose port `8080` directly to the public Internet when using an HTTPS reverse proxy.
 
 ## Container publishing
 
@@ -153,7 +138,7 @@ GitHub Actions tests every pull request and builds a multi-architecture (`linux/
 2. Implement SMTP intake, recipient-domain validation, size limits, and durable persistence.
 3. Implement SQLite schema, raw-message storage, recovery behavior, expiry cleanup, and disk-cap eviction.
 4. Implement inbox UI plus JSON endpoints for inbox and message retrieval.
-5. Add the multi-stage Dockerfile, Compose configuration, Traefik labels, health checks, metrics/logging, and VPS setup documentation.
+5. Add the multi-stage Dockerfile, Compose configuration, health checks, metrics/logging, and VPS setup documentation.
 6. Add SMTP/API/persistence/retention tests and a load-test harness; benchmark before setting a supported rate.
 
 ## Non-goals for v1
