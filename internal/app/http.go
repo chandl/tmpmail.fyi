@@ -15,6 +15,15 @@ import (
 func NewHTTPServer(cfg Config, store *Store) http.Handler {
 	mux := http.NewServeMux()
 	api.HandlerFromMux(&apiServer{store: store}, mux)
+	mux.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, _ *http.Request) {
+		specification, err := api.GetSpecJSON()
+		if err != nil {
+			http.Error(w, "API specification unavailable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/vnd.oai.openapi+json;version=3.1")
+		_, _ = w.Write(specification)
+	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		renderInbox(w, store, cfg.MailDomain, strings.TrimSpace(r.URL.Query().Get("inbox")))
 	})
@@ -119,7 +128,11 @@ func requestLogger(next http.Handler) http.Handler {
 	})
 }
 
-var inboxTemplate = template.Must(template.New("inbox").Parse(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>tmpmail</title><style>body{font:16px system-ui,sans-serif;max-width:900px;margin:3rem auto;padding:0 1rem;color:#17212b}input{padding:.6rem;width:min(28rem,80%)}button{padding:.6rem}article{border-top:1px solid #ddd;padding:1rem 0}small{color:#667}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f5f6;padding:1rem}a{color:#0755a0}</style></head><body><h1>tmpmail</h1><form><input name="inbox" value="{{.InboxName}}" placeholder="build-482" autofocus><span>@{{.Domain}}</span><button>Open inbox</button></form>{{if .Error}}<p>{{.Error}}</p>{{end}}{{if .Address}}<p><small>Inbox: {{.Address}} · Messages expire after one hour. API: <a href="/api/inboxes/{{.Address}}">inbox JSON</a></small></p>{{if .Messages}}{{range .Messages}}<article><strong>{{.Subject}}</strong><br><small>From {{.From}} · {{.Received.Format "2006-01-02 15:04:05 UTC"}} · expires {{.ExpiresAt.Format "15:04:05 UTC"}}</small><details><summary>View original message</summary><pre>{{.Body}}</pre></details></article>{{end}}{{else}}<p>No active messages.</p>{{end}}{{end}}</body></html>`))
+var inboxTemplate = template.Must(template.New("inbox").Parse(`<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>tmpmail</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0b1020;color:#e8edf7;font:15px/1.5 ui-sans-serif,system-ui,sans-serif}.shell{width:min(880px,calc(100% - 32px));margin:7vh auto}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:30px}.brand{font-weight:750;font-size:22px;letter-spacing:-.04em}.brand b{color:#7c9cff}.badge{color:#9aa7bf;font-size:12px;border:1px solid #263554;border-radius:999px;padding:4px 9px}.panel{background:#121a2d;border:1px solid #263554;border-radius:16px;padding:22px;box-shadow:0 18px 50px #0003}label{display:block;color:#9aa7bf;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px}.lookup{display:flex;gap:8px;align-items:center}.lookup input{min-width:0;flex:1;background:#0b1020;border:1px solid #334365;border-radius:9px;color:#f4f7ff;font:inherit;padding:11px 12px;outline:none}.lookup input:focus{border-color:#7c9cff;box-shadow:0 0 0 3px #7c9cff22}.domain{white-space:nowrap;color:#9aa7bf}button{border:0;border-radius:9px;background:#7c9cff;color:#0b1020;font:700 14px inherit;padding:11px 15px;cursor:pointer}button:hover{background:#a4b8ff}.meta{display:flex;flex-wrap:wrap;gap:7px 14px;color:#9aa7bf;font-size:13px;margin:18px 0 4px}.meta a{color:#aebeff;text-decoration:none}.meta a:hover{text-decoration:underline}.notice{color:#ffb6b6;margin:16px 0 0}.message{border-top:1px solid #263554;padding:17px 0}.message:first-of-type{margin-top:10px}.subject{font-weight:700;color:#f7f9ff}.details{color:#9aa7bf;font-size:13px;margin-top:3px}details{margin-top:12px}summary{cursor:pointer;color:#aebeff;font-size:13px}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0 0;padding:13px;background:#0b1020;border-radius:8px;color:#cbd6ec;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}.empty{color:#9aa7bf;padding:20px 0 4px}.footer{margin-top:18px;color:#71809e;font-size:12px}.footer a{color:#9aa7bf;text-decoration:none}@media(max-width:560px){.shell{margin:28px auto}.top{margin-bottom:20px}.panel{padding:16px}.lookup{flex-wrap:wrap}.domain{width:100%}button{width:100%}}
+</style></head><body><main class="shell"><header class="top"><div class="brand">tmp<span>mail</span></div><div class="badge">disposable inboxes</div></header><section class="panel"><form><label for="inbox">Open inbox</label><div class="lookup"><input id="inbox" name="inbox" value="{{.InboxName}}" placeholder="build-482" autocomplete="off" autofocus><span class="domain">@{{.Domain}}</span><button>Open</button></div></form>{{if .Error}}<p class="notice">{{.Error}}</p>{{end}}{{if .Address}}<div class="meta"><span>{{.Address}}</span><span>expires in 1 hour</span><a href="/api/inboxes/{{.Address}}">Inbox JSON</a></div>{{if .Messages}}{{range .Messages}}<article class="message"><div class="subject">{{.Subject}}</div><div class="details">From {{.From}} · {{.Received.Format "02 Jan, 15:04 UTC"}} · expires {{.ExpiresAt.Format "15:04 UTC"}}</div><details><summary>View original message</summary><pre>{{.Body}}</pre></details></article>{{end}}{{else}}<p class="empty">No active messages in this inbox.</p>{{end}}{{end}}</section><footer class="footer"><a href="/openapi.json">OpenAPI 3.1 specification</a></footer></main></body></html>`))
 
 func renderInbox(w http.ResponseWriter, store *Store, domain, inboxName string) {
 	data := struct {

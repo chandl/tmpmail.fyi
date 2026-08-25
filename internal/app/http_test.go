@@ -25,3 +25,16 @@ func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 		t.Fatalf("expected resolved inbox address, got %q", response.Body.String())
 	}
 }
+
+func TestServesEmbeddedOpenAPISpecification(t *testing.T) {
+	store := testStore(t, time.Hour)
+	response := httptest.NewRecorder()
+	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("got status %d", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), `"openapi":"3.1.0"`) {
+		t.Fatalf("expected OpenAPI document, got %q", response.Body.String())
+	}
+}

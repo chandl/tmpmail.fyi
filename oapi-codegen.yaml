@@ -3,4 +3,5 @@ package: api
 generate:
   models: true
   std-http-server: true
+  embedded-spec: true
 output: internal/api/openapi.gen.go

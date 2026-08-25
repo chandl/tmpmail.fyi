@@ -72,6 +72,7 @@ The API is intentionally small:
 GET /healthz
 GET /api/inboxes/{full-recipient-address}
 GET /api/messages/{message-id}
+GET /openapi.json
 ```
 
 The complete contract is in [openapi.yaml](openapi.yaml).
@@ -141,6 +142,10 @@ Internet
 - Limit container memory and disk through host/volume monitoring; application-level limits remain the primary safeguard.
 - Use `docker compose pull && docker compose up -d` for upgrades after providing a tagged image.
 - Do not expose port `8080` directly to the public Internet in production.
+
+## Container publishing
+
+GitHub Actions tests every pull request and builds a multi-architecture (`linux/amd64`, `linux/arm64`) container image. Pushes to `main` publish `ghcr.io/<owner>/tmpmail:latest` and a branch/SHA tag; version tags such as `v0.1.0` also publish the matching version tag. The workflow is [`.github/workflows/container.yml`](.github/workflows/container.yml).
 
 ## Implementation plan
 
