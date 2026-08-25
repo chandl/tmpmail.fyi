@@ -51,3 +51,36 @@ func TestServesEmbeddedOpenAPISpecification(t *testing.T) {
 		t.Fatalf("expected OpenAPI document, got %q", response.Body.String())
 	}
 }
+
+func TestServesMailClientUIAssets(t *testing.T) {
+	store := testStore(t, time.Hour)
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/ui.js", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "message-list") || !strings.Contains(response.Body.String(), "New random") || !strings.Contains(response.Body.String(), "Refresh") {
+		t.Fatalf("expected mail client UI script, got status=%d body=%q", response.Code, response.Body.String())
+	}
+}
+
+func TestContentSecurityPolicyAllowsUIAssets(t *testing.T) {
+	store := testStore(t, time.Hour)
+	response := httptest.NewRecorder()
+	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(response.Header().Get("Content-Security-Policy"), "script-src 'self' 'unsafe-inline'") {
+		t.Fatalf("UI scripts are blocked by CSP: %q", response.Header().Get("Content-Security-Policy"))
+	}
+}
+
+func TestInboxAPIUsesPageResponse(t *testing.T) {
+	store := testStore(t, time.Hour)
+	if _, err := store.Save("build@mail.test", "sender@example.org", []byte("Subject: hello\r\n\r\nbody")); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/inboxes/build@mail.test?limit=25&offset=0", nil))
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"hasMore":false`) {
+		t.Fatalf("expected paged inbox response, got status=%d body=%q", response.Code, response.Body.String())
+	}
+}

@@ -115,9 +115,14 @@ func (s *Store) Save(recipient, sender string, raw []byte) (Message, error) {
 }
 
 func (s *Store) List(recipient string) ([]Message, error) {
-	rows, err := s.db.Query(`SELECT id, recipient, sender, subject, received_at, expires_at, size FROM messages WHERE recipient = ? AND expires_at > ? ORDER BY received_at DESC`, recipient, time.Now().Unix())
+	messages, _, err := s.ListPage(recipient, 100, 0)
+	return messages, err
+}
+
+func (s *Store) ListPage(recipient string, limit, offset int) ([]Message, bool, error) {
+	rows, err := s.db.Query(`SELECT id, recipient, sender, subject, received_at, expires_at, size FROM messages WHERE recipient = ? AND expires_at > ? ORDER BY received_at DESC, id DESC LIMIT ? OFFSET ?`, recipient, time.Now().Unix(), limit+1, offset)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	var messages []Message
@@ -125,12 +130,19 @@ func (s *Store) List(recipient string) ([]Message, error) {
 		var m Message
 		var received, expires int64
 		if err := rows.Scan(&m.ID, &m.Recipient, &m.From, &m.Subject, &received, &expires, &m.Size); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		m.Received, m.ExpiresAt = time.Unix(received, 0).UTC(), time.Unix(expires, 0).UTC()
 		messages = append(messages, m)
 	}
-	return messages, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(messages) > limit
+	if hasMore {
+		messages = messages[:limit]
+	}
+	return messages, hasMore, nil
 }
 
 func (s *Store) Get(id string) (Message, error) {

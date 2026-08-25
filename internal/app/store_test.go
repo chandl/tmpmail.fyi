@@ -56,3 +56,27 @@ func TestCleanupRemovesExpiredMessage(t *testing.T) {
 		t.Fatalf("expected expired message removal, got %#v", list)
 	}
 }
+
+func TestListPageReturnsHasMore(t *testing.T) {
+	store := testStore(t, time.Hour)
+	for i := 0; i < 3; i++ {
+		if _, err := store.Save("build@mail.test", "sender@example.org", []byte("Subject: page\r\n\r\nbody")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, hasMore, err := store.ListPage("build@mail.test", 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 2 || !hasMore {
+		t.Fatalf("expected two messages and another page, got len=%d hasMore=%t", len(first), hasMore)
+	}
+	second, hasMore, err := store.ListPage("build@mail.test", 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1 || hasMore {
+		t.Fatalf("expected final single message, got len=%d hasMore=%t", len(second), hasMore)
+	}
+}

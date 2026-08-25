@@ -69,7 +69,7 @@ The API is intentionally small:
 
 ```text
 GET /healthz
-GET /api/inboxes/{full-recipient-address}
+GET /api/inboxes/{full-recipient-address}?limit=25&offset=0
 GET /api/messages/{message-id}
 GET /openapi.json
 ```

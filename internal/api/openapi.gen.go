@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -20,6 +21,15 @@ import (
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// InboxPage defines model for InboxPage.
+type InboxPage struct {
+	// HasMore Whether another page is available after this one.
+	HasMore  bool             `json:"hasMore"`
+	Limit    int              `json:"limit"`
+	Messages []MessageSummary `json:"messages"`
+	Offset   int              `json:"offset"`
+}
 
 // Message defines model for Message.
 type Message struct {
@@ -52,11 +62,20 @@ type MessageSummary struct {
 // Inbox defines model for Inbox.
 type Inbox = openapi_types.Email
 
+// ListInboxMessagesParams defines parameters for ListInboxMessages.
+type ListInboxMessagesParams struct {
+	// Limit Maximum messages to return (default 25, maximum 100).
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Zero-based number of messages to skip (default 0).
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// ListInboxMessages List active messages for an inbox
 	// (GET /api/inboxes/{inbox})
-	ListInboxMessages(w http.ResponseWriter, r *http.Request, inbox Inbox)
+	ListInboxMessages(w http.ResponseWriter, r *http.Request, inbox Inbox, params ListInboxMessagesParams)
 	// GetMessage Retrieve one active message, including its original RFC 822 source
 	// (GET /api/messages/{id})
 	GetMessage(w http.ResponseWriter, r *http.Request, id string)
@@ -89,8 +108,37 @@ func (siw *ServerInterfaceWrapper) ListInboxMessages(w http.ResponseWriter, r *h
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListInboxMessagesParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListInboxMessages(w, r, inbox)
+		siw.Handler.ListInboxMessages(w, r, inbox, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -272,24 +320,28 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"9d8DAA==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tmpmail API
-  version: 0.1.0
+  version: 1.0.0
   description: |
     Read-only API for temporary inbound mail. All messages expire automatically,
     normally one hour after receipt. There is no outbound email API.
@@ -22,15 +22,28 @@ paths:
       summary: List active messages for an inbox
       parameters:
         - $ref: '#/components/parameters/Inbox'
+        - name: limit
+          in: query
+          description: Maximum messages to return (default 25, maximum 100).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - name: offset
+          in: query
+          description: Zero-based number of messages to skip (default 0).
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
       responses:
         '200':
-          description: Messages currently retained for the inbox, newest first.
+          description: A page of active messages, newest first.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/MessageSummary'
+                $ref: '#/components/schemas/InboxPage'
         '500':
           $ref: '#/components/responses/StorageError'
   /api/messages/{id}:
@@ -68,6 +81,26 @@ components:
         format: email
         example: build-482@tmpmail.fyi
   schemas:
+    InboxPage:
+      type: object
+      required: [messages, offset, limit, hasMore]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageSummary'
+        offset:
+          type: integer
+          minimum: 0
+          example: 0
+        limit:
+          type: integer
+          minimum: 1
+          example: 25
+        hasMore:
+          type: boolean
+          description: Whether another page is available after this one.
+          example: true
     MessageSummary:
       type: object
       required: [id, recipient, from, subject, received, expiresAt, size]
