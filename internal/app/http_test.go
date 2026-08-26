@@ -45,8 +45,22 @@ func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	if !strings.Contains(page, "https://chandl.io/") || !strings.Contains(page, "https://github.com/chandl/tmpmail.fyi") {
 		t.Fatalf("expected footer links, got %q", page)
 	}
+	if !strings.Contains(page, "href=\"/privacy\"") {
+		t.Fatalf("expected privacy link, got %q", page)
+	}
 	if !strings.Contains(page, strconv.Itoa(time.Now().Year())) {
 		t.Fatalf("expected current copyright year, got %q", page)
+	}
+}
+
+func TestPrivacyPageExplainsMessageHandling(t *testing.T) {
+	store := testStore(t, time.Hour)
+	response := httptest.NewRecorder()
+	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/privacy", nil))
+
+	page := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(page, "Privacy and message handling") || !strings.Contains(page, "automatically deleted after one hour by default") || !strings.Contains(page, "does not include advertising or analytics trackers") {
+		t.Fatalf("expected privacy details page, got status=%d body=%q", response.Code, page)
 	}
 }
 
@@ -83,6 +97,23 @@ func TestServesMailClientUIAssets(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/ui.js", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "message-list") || !strings.Contains(response.Body.String(), "New random") || !strings.Contains(response.Body.String(), "Refresh") {
 		t.Fatalf("expected mail client UI script, got status=%d body=%q", response.Code, response.Body.String())
+	}
+}
+
+func TestInboxUIDefaultsToLightTheme(t *testing.T) {
+	store := testStore(t, time.Hour)
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+
+	page := httptest.NewRecorder()
+	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(page.Body.String(), "body{margin:0;background:#f1f5f9;color:#1e293b") {
+		t.Fatalf("expected light page theme, got %q", page.Body.String())
+	}
+
+	styles := httptest.NewRecorder()
+	handler.ServeHTTP(styles, httptest.NewRequest(http.MethodGet, "/ui.css", nil))
+	if !strings.Contains(styles.Body.String(), ".message-list{overflow:auto;padding:9px;border-right:1px solid #cbd5e1;background:#f8fafc}") {
+		t.Fatalf("expected light mailbox theme, got %q", styles.Body.String())
 	}
 }
 
