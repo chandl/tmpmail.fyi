@@ -3,7 +3,7 @@ module github.com/chandl/tmpmail.fyi
 go 1.27.0
 
 require (
-	github.com/getkin/kin-openapi v0.142.0
+	github.com/getkin/kin-openapi v0.144.0
 	github.com/mattn/go-sqlite3 v1.14.50
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/prometheus/client_golang v1.24.1
