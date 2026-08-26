@@ -33,10 +33,13 @@ type InboxPage struct {
 
 // Message defines model for Message.
 type Message struct {
-	// Body Original raw RFC 822/MIME message, including headers.
-	Body      string              `json:"body"`
-	ExpiresAt time.Time           `json:"expiresAt"`
-	From      string              `json:"from"`
+	// Body Original raw MIME body, without RFC 822 headers or the separating blank line.
+	Body      string    `json:"body"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	From      string    `json:"from"`
+
+	// Headers Original RFC 822 header block, without the separating blank line.
+	Headers   string              `json:"headers"`
 	Id        string              `json:"id"`
 	Received  time.Time           `json:"received"`
 	Recipient openapi_types.Email `json:"recipient"`
@@ -74,10 +77,10 @@ type ListInboxMessagesParams struct {
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// ListInboxMessages List active messages for an inbox
-	// (GET /api/inboxes/{inbox})
+	// (GET /api/v1/inboxes/{inbox})
 	ListInboxMessages(w http.ResponseWriter, r *http.Request, inbox Inbox, params ListInboxMessagesParams)
-	// GetMessage Retrieve one active message, including its original RFC 822 source
-	// (GET /api/messages/{id})
+	// GetMessage Retrieve one active message, with RFC 822 headers and MIME body separated
+	// (GET /api/v1/messages/{id})
 	GetMessage(w http.ResponseWriter, r *http.Request, id string)
 	// Healthcheck Check whether the HTTP service is responsive
 	// (GET /healthz)
@@ -309,8 +312,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.Healthcheck)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/inboxes/{inbox}", wrapper.ListInboxMessages)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/messages/{id}", wrapper.GetMessage)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/inboxes/{inbox}", wrapper.ListInboxMessages)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/messages/{id}", wrapper.GetMessage)
 
 	return m
 }
@@ -320,28 +323,28 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"tFddb9u4Ev0rA94+3AvItvyVpnpq0NtuAzRokGSx2DZZgBZHFluKVIeUEzXwf1+Qki0rttMt0H0ILInk",
-	"zJkzhzOTR5aaojQatbMseWQlJ16gQwpv53phHvyDQJuSLJ00miXsXaUUEKaylKgdYMGlAi4EobUR/H71",
-	"YYA6NQIF3OeoQWOK1nKqhyxi0hsouctZxDQvkCVMBi8RI/xWSULBEkcVRsymORbcu8cHXpTK711UUonB",
-	"7HTy2hWl9zvMaskilhkquGMJC2BYxFxd+v3WkdRLtl6vvX1bGm0xhHbtDPElviUytB/hTY5QeNBLBOsM",
-	"IaSmUgK0cbBAIORiyNbrDcaOrEu+RP9SkimRnGyc5dxeGMJ9P3/k6HIk4NqE39I7lBb4ikvFFwqBZw4J",
-	"XC4tGI2ewS0ZDUttoAtjFHLN1hFTspCuR9tkHrFCallUBUvG2zNSO1wi+TNtsAGtdFiEhxeEGUvYf0ad",
-	"RkZtwKOL5sB1VRScarbeGuVEPLybLLPYxxHvwIj3Yax3NfC5w7S1tYkt2jJ6t7ViFl8wdd5xC8175kp9",
-	"zFjy+SdjeZq/hRH1fvI+klxKzRUQv4erd2/gdDIZXZxfvN1IJwKpU1UJqZeQIxdItpdA9o5MkYBFLZBe",
-	"t5+Hhpa3dKuvqxBQAn+aimCFJDOZcu8a/N3yW/zfeDKdzU8OCL7PZYhgn6y7jq5N9HvixYdSEtqzfirZ",
-	"JJ6cDOLTwWR+Mxkn43kSx592L6LgDgdOFriPLWIZmaJvbp+EQ+ek6J96OZ9NMUU+xXg6w3S+EC9Px69Q",
-	"CExfnszEKxb5WuOQfL7++swHWTx4dfc4naxfHDJPmKJcoTgeafyzkW7L5K+pYxGz8vuBQnLF77uCJb8j",
-	"SA2L2mFfcKez6Y4Lqd3JjD1/JSNmGx324R/W5A9VKAXbZaTVQedjJwPRju7aoPfl6+1LnZkDfCAXA6NV",
-	"DWeX55AZAodFaYhTDb7fVFpAoB3OlNowZ6HxCbxypuBOplypOrrV2lOmVO1LMOQ+9qYsB7SlG8JNjhQK",
-	"tzZgKtfYb/ri2eX58FZ7aqQL3LUJ9wssYisk20AeD+NhHApniZqXkiVsOhwP40bDebiLI17KUeiXaEeP",
-	"4WHtvy+bQuuvbUjHuWAJ+yCtC03poiuku/39SFXstozC6VAP++xe8AevmI43Z4DQVaThvwIzXikHk3kE",
-	"RbtvHMf/2zb/bxVS3XX/TUXvun1roW1bjQmWjOP4+Sa2D/MTkhksuEUBuioWSGCyHmb7VZYd4uMYt+3n",
-	"AMgf9bS7J4PHJI79T2q0a6sCL0vVXqPRF+uRP+44eq5xdSNHuAr96M+aacJkwFMnV9uBxkag8R6tg0yS",
-	"dUMvuXkcH/O1BT/qjUzrUBralhGk9tRNuHVcQzPe+f1BvZvl0aMUx7X7G7pNG98T7f6oZkr+rdp6hvP/",
-	"t2pEAYsaXI4NCEAtSiO1OzaIimen0H/eSf7VpG94OZByz0U/CyG7s3j2/IgrDNow2+KDT6QhyPmmGIpf",
-	"IpArdCRxhaGC9iHuTknSWTCbsaodqcCailJsFJQjVy7/flQ378N6mmP6le3l4AAL10grmYbS3Ziuh0+Q",
-	"v/G2/D8yYUD3Wnp/c3MJtjvYepGrNid+6bBWr7BUPEW4ly6H2veRTTMQpuBSe11WpFjCcudKm4xGu9PB",
-	"+m799wA=",
+	"tFdvb9u2E/4qB/764jdAtmXHTlO9atC1a4AGDZIMw9pkAC2eLDYUqR4pJ27g7z6Qki0rsrN26F5Fisi7",
+	"55577o8fWWqK0mjUzrLkkZWceIEOKbyd6bl58A8CbUqydNJolrB3lVJAmMpSonaABZcKuBCE1kbw++WH",
+	"AerUCBRwn6MGjSlay2k1ZBGT3kDJXc4ipnmBLGEyeIkY4ddKEgqWOKowYjbNseDePT7wolT+7LySSgym",
+	"J5PXrii932G2kiximaGCO5awAIZFzK1Kf946knrB1uu1t29Loy2G0K6cIb7At0SG+hFe5wiFB71AsM4Q",
+	"QmoqJUAbB3MEQi6GbL3eYGzJuuAL9C8lmRLJydpZzu25Iez7+SNHlyMB1yb8Lb1DaYEvuVR8rhB45pDA",
+	"5dKC0egZ3JJRs9QEOjdGIddsHTElC+k6tE1mESuklkVVsGS8vSO1wwWSv9MEG9BKh0V4eEGYsYT9b9Rq",
+	"ZNQEPDqvL1xVRcFpxdZbo5yIh3eTZRa7OOIdGHEfxnpXA59bTFtbm9iiLaO3Wytm/gVT5x030LxnrtTH",
+	"jCWffzCWp/mbG7HqJ+8jyYXUXAHxezg/O38L/lwE99LlpnJw+e4NnEwmkCMXSBaMzyOCRV9kTuoFzBXX",
+	"d6Dkk8Sy8eRoOjvuqzhija1nwHS9wlyZ9K7F9J0A3pEpErCoBdLr5t9DQ4sbutFXVWA6gT9NRbBEkplM",
+	"uYcBvuj31F43rZsQoprWfgZv2xxuUtKrKHwoJaE97eqLTeLJ8SA+GUxm15NxMp4lcfxptzsI7nDgZIH7",
+	"uM3IFF1zfQL23ZOie+vlbHqEKfIjjI+mmM7m4uXJ+BUKgenL46l4xSLfAB2Sz9tfn/kgiwevbh+PJusX",
+	"+8wTpiiXKA5HGv9opNve/XOaa8Ss/Lanu13y+7aLym8IUsN85dB2xHYyPdpxIbU7nrLn+0TEbK3BLvx/",
+	"qUcp2C4jjQ5aHzsZiHZ01wTdl6+3L3Vm9vCBXAyMVis4vTiDzPcDLEpDnFbgh2ClBQTa4VSpDXMWap/A",
+	"K2cK7mTKlVpFN1p7ypRa+bkAuY+9nhUBbemGcJ0jhWmiDZjK1fbrYX16cTa80Z4a6QJ3TcL9BxaxJZKt",
+	"IY+H8TAO3bxEzUvJEnY0HA/jWsN5qMURL+VoOR6FOY529Bge1v7Toh4AvnJDRs4ES9gHaV0Yludtg9/d",
+	"Ow506/bIKNwOfbpL8Dl/8KJpqXMGCF1FGv4vMOOVcjCZRVA058Zx/Mt2KflaIa3arWQzadotpLHQjNPa",
+	"BEvGcfz8cO3D/IRkBnNuUYCuijkSmKyD2d7JskV8GON2LO4B+U+z9vbJQjSJY/8nNdo1jYGXpWoqafTF",
+	"euSPO46eG6jtKhSqoRv9ab3lmAx46uRyu2jZCDTeo3WQSbJu6FU3i+NDvrbgR51Vbh26QzM1gtSeugmF",
+	"xzXUa6c/vxHw5sToUYrD8v0N3WbD6Om2v0Wakn+tts7h7NdGkChgvgrjOOAA1KI0UrtDO7J4dkH+/nny",
+	"n+Z9w8uerHsuuokICZ7G0+e3b2HQhrUbH3wuDUHONy1R/BSNXKIjiUsMfbQLsd6beosc16Ld9zbrFIpa",
+	"Szly5fJvB+XzPnxPc0zvWC8Ve8i4QlrKNPTx2vRq+CSAN96W/6kVfkJ4Sb2/vr4A215svMhlkxr/ab9k",
+	"L7FUPMU67pUfKpvJIEzBpfbyrEixhOXOlTYZjXZXhfXt+u8BAA==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

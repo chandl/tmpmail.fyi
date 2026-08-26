@@ -60,10 +60,10 @@ func observeHTTP(route, status string, seconds float64) {
 
 func metricRoute(path string) string {
 	switch {
-	case strings.HasPrefix(path, "/api/inboxes/"):
-		return "/api/inboxes/{inbox}"
-	case strings.HasPrefix(path, "/api/messages/"):
-		return "/api/messages/{id}"
+	case strings.HasPrefix(path, "/api/v1/inboxes/"):
+		return "/api/v1/inboxes/{inbox}"
+	case strings.HasPrefix(path, "/api/v1/messages/"):
+		return "/api/v1/messages/{id}"
 	case strings.HasPrefix(path, "/ui/messages/") && strings.HasSuffix(path, "/html"):
 		return "/ui/messages/{id}/html"
 	default:

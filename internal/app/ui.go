@@ -81,7 +81,7 @@ const uiScript = `
   const params = new URLSearchParams(window.location.search);
   const offset = Math.max(0, Number(params.get('offset') || 0));
   if (address && Number.isFinite(offset)) {
-    fetch('/api/inboxes/' + encodeURIComponent(address) + '?limit=25&offset=' + offset)
+    fetch('/api/v1/inboxes/' + encodeURIComponent(address) + '?limit=25&offset=' + offset)
       .then(response => response.ok ? response.json() : null)
       .then(page => {
         if (!page) return;

@@ -16,7 +16,7 @@ paths:
       responses:
         '204':
           description: Service is healthy.
-  /api/inboxes/{inbox}:
+  /api/v1/inboxes/{inbox}:
     get:
       operationId: listInboxMessages
       summary: List active messages for an inbox
@@ -46,10 +46,10 @@ paths:
                 $ref: '#/components/schemas/InboxPage'
         '500':
           $ref: '#/components/responses/StorageError'
-  /api/messages/{id}:
+  /api/v1/messages/{id}:
     get:
       operationId: getMessage
-      summary: Retrieve one active message, including its original RFC 822 source
+      summary: Retrieve one active message, with RFC 822 headers and MIME body separated
       parameters:
         - name: id
           in: path
@@ -137,12 +137,16 @@ components:
       allOf:
         - $ref: '#/components/schemas/MessageSummary'
         - type: object
-          required: [body]
+          required: [headers, body]
           properties:
+            headers:
+              type: string
+              description: Original RFC 822 header block, without the separating blank line.
+              example: "From: sender@example.org\r\nSubject: Your verification code"
             body:
               type: string
-              description: Original raw RFC 822/MIME message, including headers.
-              example: "From: sender@example.org\r\nSubject: Your verification code\r\n\r\n123456"
+              description: Original raw MIME body, without RFC 822 headers or the separating blank line.
+              example: "123456"
   responses:
     StorageError:
       description: The message store could not be read.

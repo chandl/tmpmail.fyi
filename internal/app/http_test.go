@@ -1,8 +1,10 @@
 package app
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +27,9 @@ func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	if !strings.Contains(page, "build@mail.test") {
 		t.Fatalf("expected resolved inbox address, got %q", page)
 	}
+	if !strings.Contains(page, "<title>tmpmail - build@mail.test</title>") {
+		t.Fatalf("expected inbox-specific page title, got %q", page)
+	}
 	if !strings.Contains(page, "Message headers") || !strings.Contains(page, "body") {
 		t.Fatalf("expected separate message sections, got %q", page)
 	}
@@ -36,6 +41,12 @@ func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	}
 	if !strings.Contains(page, "local-time") {
 		t.Fatalf("expected browser-local timestamps, got %q", page)
+	}
+	if !strings.Contains(page, "https://chandl.io/") || !strings.Contains(page, "https://github.com/chandl/tmpmail.fyi") {
+		t.Fatalf("expected footer links, got %q", page)
+	}
+	if !strings.Contains(page, strconv.Itoa(time.Now().Year())) {
+		t.Fatalf("expected current copyright year, got %q", page)
 	}
 }
 
@@ -49,6 +60,18 @@ func TestServesEmbeddedOpenAPISpecification(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"openapi":"3.1.0"`) {
 		t.Fatalf("expected OpenAPI document, got %q", response.Body.String())
+	}
+}
+
+func TestServesFaviconPack(t *testing.T) {
+	store := testStore(t, time.Hour)
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+	for _, asset := range []string{"/favicon.ico", "/favicon-16x16.png", "/favicon-32x32.png", "/apple-touch-icon.png", "/android-chrome-192x192.png", "/android-chrome-512x512.png", "/site.webmanifest"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, asset, nil))
+		if response.Code != http.StatusOK || response.Body.Len() == 0 {
+			t.Fatalf("expected favicon asset %s, got status=%d body length=%d", asset, response.Code, response.Body.Len())
+		}
 	}
 }
 
@@ -93,9 +116,34 @@ func TestInboxAPIUsesPageResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := httptest.NewRecorder()
-	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/inboxes/build@mail.test?limit=25&offset=0", nil))
+	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/inboxes/build@mail.test?limit=25&offset=0", nil))
 
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"hasMore":false`) {
 		t.Fatalf("expected paged inbox response, got status=%d body=%q", response.Code, response.Body.String())
+	}
+}
+
+func TestMessageAPISeparatesHeadersAndBody(t *testing.T) {
+	store := testStore(t, time.Hour)
+	message, err := store.Save("build@mail.test", "sender@example.org", []byte("From: sender@example.org\r\nSubject: hello\r\n\r\nbody"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response := httptest.NewRecorder()
+	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/messages/"+message.ID, nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("got status %d: %q", response.Code, response.Body.String())
+	}
+
+	var result struct {
+		Headers string `json:"headers"`
+		Body    string `json:"body"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Headers != "From: sender@example.org\r\nSubject: hello" || result.Body != "body" {
+		t.Fatalf("expected separated headers and body, got %#v", result)
 	}
 }
