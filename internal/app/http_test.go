@@ -48,6 +48,9 @@ func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	if !strings.Contains(page, "href=\"/privacy\"") {
 		t.Fatalf("expected privacy link, got %q", page)
 	}
+	if !strings.Contains(page, `<header class="top"><a class="brand" href="/">tmp<span>mail</span></a></header>`) {
+		t.Fatalf("expected shared linked wordmark, got %q", page)
+	}
 	if !strings.Contains(page, strconv.Itoa(time.Now().Year())) {
 		t.Fatalf("expected current copyright year, got %q", page)
 	}
