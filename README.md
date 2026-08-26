@@ -161,14 +161,6 @@ The included Compose file serves the UI directly on port `8080` over HTTP. To us
 
 GitHub Actions tests every pull request and builds a multi-architecture (`linux/amd64`, `linux/arm64`) container image. Pushes to `main` publish `ghcr.io/chandl/tmpmail.fyi:latest` and a branch/SHA tag; version tags such as `v0.1.0` also publish the matching version tag. The workflow is [`.github/workflows/container.yml`](.github/workflows/container.yml).
 
-## Non-goals for v1
-
-- Outbound email or reply support
-- User accounts, passwords, or multi-tenant administration
-- Spam filtering, antivirus, or attachment previews
-- Guaranteed delivery or archival storage
-- High availability across multiple machines
-
 ## Status
 
 The service, unit tests, container build, Compose configuration, and container-publishing workflow are present. Before relying on a particular messages-per-second target, run a load test on the intended VPS and tune based on observed disk and SQLite performance.
