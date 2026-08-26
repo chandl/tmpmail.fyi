@@ -48,8 +48,8 @@ func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	if !strings.Contains(page, "href=\"/privacy\"") {
 		t.Fatalf("expected privacy link, got %q", page)
 	}
-	if !strings.Contains(page, `<header class="top"><a class="brand" href="/">tmp<span>mail</span></a></header>`) {
-		t.Fatalf("expected shared linked wordmark, got %q", page)
+	if !strings.Contains(page, `<header class="top"><a class="brand" href="/">tmp<span>mail</span></a><span class="badge">disposable email</span></header>`) {
+		t.Fatalf("expected shared wordmark and disposable-email badge, got %q", page)
 	}
 	if !strings.Contains(page, strconv.Itoa(time.Now().Year())) {
 		t.Fatalf("expected current copyright year, got %q", page)
@@ -62,8 +62,22 @@ func TestPrivacyPageExplainsMessageHandling(t *testing.T) {
 	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/privacy", nil))
 
 	page := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(page, "Privacy and message handling") || !strings.Contains(page, "automatically deleted after one hour by default") || !strings.Contains(page, "does not include advertising or analytics trackers") {
+	if response.Code != http.StatusOK || !strings.Contains(page, "disposable email") || !strings.Contains(page, "Privacy and message handling") || !strings.Contains(page, "automatically deleted after one hour by default") || !strings.Contains(page, "does not include advertising or analytics trackers") {
 		t.Fatalf("expected privacy details page, got status=%d body=%q", response.Code, page)
+	}
+}
+
+func TestHTMLMessageUsesLightTheme(t *testing.T) {
+	store := testStore(t, time.Hour)
+	message, err := store.Save("build@mail.test", "sender@example.org", []byte("Content-Type: text/html\r\n\r\n<p>Hello</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/ui/messages/"+message.ID+"/html", nil))
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `color-scheme" content="light"`) || !strings.Contains(response.Body.String(), "background:#fff;color:#1e293b") {
+		t.Fatalf("expected light HTML message rendering, got status=%d body=%q", response.Code, response.Body.String())
 	}
 }
 
