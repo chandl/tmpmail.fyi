@@ -1,14 +1,70 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestRequestLoggerLogsMillisecondsAndUserAgentWithoutRemoteAddress(t *testing.T) {
+	var output bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previousOutput) })
+
+	request := httptest.NewRequest(http.MethodGet, "/health", nil)
+	request.RemoteAddr = "192.0.2.1:12345"
+	request.Header.Set("User-Agent", "tmpmail-test/1.0")
+	requestLogger(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), false, []string{"User-Agent"}).ServeHTTP(httptest.NewRecorder(), request)
+
+	entry := output.String()
+	if !regexp.MustCompile(`duration_ms=\d+`).MatchString(entry) {
+		t.Fatalf("expected millisecond duration, got %q", entry)
+	}
+	if !strings.Contains(entry, `user_agent="tmpmail-test/1.0"`) {
+		t.Fatalf("expected user agent, got %q", entry)
+	}
+	if strings.Contains(entry, "remote=") || strings.Contains(entry, request.RemoteAddr) {
+		t.Fatalf("expected no remote address, got %q", entry)
+	}
+}
+
+func TestParseHTTPLogHeaders(t *testing.T) {
+	headers, err := parseHTTPLogHeaders("User-Agent, CF-Connecting-IP, user-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(headers, ",") != "User-Agent,Cf-Connecting-Ip" {
+		t.Fatalf("unexpected headers: %#v", headers)
+	}
+	if _, err := parseHTTPLogHeaders("CF-Connecting-IP,not a header"); err == nil {
+		t.Fatal("expected invalid header name to be rejected")
+	}
+}
+
+func TestRequestLoggerLogsConfiguredHeaders(t *testing.T) {
+	var output bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previousOutput) })
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("CF-Connecting-IP", "198.51.100.10")
+	requestLogger(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), false, []string{"CF-Connecting-IP"}).ServeHTTP(httptest.NewRecorder(), request)
+
+	if !strings.Contains(output.String(), `cf_connecting_ip="198.51.100.10"`) {
+		t.Fatalf("expected configured header, got %q", output.String())
+	}
+}
 
 func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	store := testStore(t, time.Hour)

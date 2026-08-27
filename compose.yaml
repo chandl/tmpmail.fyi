@@ -13,6 +13,8 @@ services:
       MAX_MESSAGE_BYTES: 2097152
       MAX_STORAGE_BYTES: 21474836480
       METRICS_ENABLED: "false"
+      # Comma-separated request headers to include in HTTP logs.
+      HTTP_LOG_HEADERS: User-Agent
     ports:
       - "25:2525"
       - "8080:8080"

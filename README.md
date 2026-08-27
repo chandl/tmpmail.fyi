@@ -55,6 +55,7 @@ MESSAGE_TTL=1h
 MAX_MESSAGE_BYTES=2097152
 MAX_STORAGE_BYTES=21474836480
 METRICS_ENABLED=false # Start the separate metrics listener when true.
+HTTP_LOG_HEADERS=User-Agent # Comma-separated request headers to include in HTTP logs.
 ```
 
 `MAX_MESSAGE_BYTES` defaults to 2 MiB and `MAX_STORAGE_BYTES` defaults to 20 GiB. The global storage cap is enforced on every save: expired messages are removed first, then the oldest messages are evicted when necessary. A cleanup job also runs at startup and every minute.
@@ -101,7 +102,7 @@ Set `METRICS_ENABLED=true` to start a dedicated Prometheus listener at `METRICS_
 
 The Compose file changes `METRICS_ADDR` to `:9090`, but does not publish it to the host, so a Prometheus container on the private Compose network can scrape `tmpmail:9090`. Do not add a public `9090` port mapping. Metrics cover SMTP outcomes, accepted bytes, active sessions, and limit rejections; normalized HTTP request counts and duration; cleanup activity; current stored message/byte usage; and storage or cleanup errors. Alert on sustained SMTP connection-limit or line-limit rejections.
 
-tmpmail logs successful SMTP receives, HTTP requests, and cleanup work. Logs do not include message bodies.
+tmpmail logs successful SMTP receives, HTTP requests, and cleanup work. Logs do not include message bodies. HTTP request logs include `method`, `path`, `status`, and `duration_ms`, plus the comma-separated request-header allowlist in `HTTP_LOG_HEADERS`. It defaults to `User-Agent`; use `HTTP_LOG_HEADERS=User-Agent,CF-Connecting-IP` behind a trusted Cloudflare and Traefik path to log the original visitor IP. Do not enable IP-header logging unless the application is reachable only through that trusted proxy path.
 
 The complete contract is in [openapi.yaml](openapi.yaml).
 

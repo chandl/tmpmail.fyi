@@ -63,7 +63,7 @@ func NewHTTPServer(cfg Config, store *Store) http.Handler {
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		renderInbox(w, store, cfg.MailDomain, strings.TrimSpace(r.URL.Query().Get("inbox")), pageOffset(r.URL.Query().Get("offset")))
 	})
-	return requestLogger(securityHeaders(mux), cfg.MetricsEnabled)
+	return requestLogger(securityHeaders(mux), cfg.MetricsEnabled, cfg.HTTPLogHeaders)
 }
 
 func serveFaviconAsset(name string) http.HandlerFunc {
@@ -196,7 +196,7 @@ func (r *responseRecorder) Write(body []byte) (int, error) {
 	return r.ResponseWriter.Write(body)
 }
 
-func requestLogger(next http.Handler, metricsEnabled bool) http.Handler {
+func requestLogger(next http.Handler, metricsEnabled bool, loggedHeaders []string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		recorder := &responseRecorder{ResponseWriter: w}
@@ -206,7 +206,18 @@ func requestLogger(next http.Handler, metricsEnabled bool) http.Handler {
 			status = http.StatusOK
 		}
 		elapsed := time.Since(started)
-		log.Printf("[web] method=%s path=%s status=%d remote=%s duration=%s", r.Method, r.URL.Path, status, r.RemoteAddr, elapsed.Round(time.Millisecond))
+		fields := []string{
+			"[web]",
+			"method=" + r.Method,
+			"path=" + r.URL.Path,
+			"status=" + strconv.Itoa(status),
+			"duration_ms=" + strconv.FormatInt(elapsed.Milliseconds(), 10),
+		}
+		for _, header := range loggedHeaders {
+			field := strings.ToLower(strings.ReplaceAll(header, "-", "_"))
+			fields = append(fields, field+"="+strconv.Quote(r.Header.Get(header)))
+		}
+		log.Print(strings.Join(fields, " "))
 		if metricsEnabled {
 			observeHTTP(metricRoute(r.URL.Path), strconv.Itoa(status), elapsed.Seconds())
 		}

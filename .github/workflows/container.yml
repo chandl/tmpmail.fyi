@@ -30,6 +30,11 @@ jobs:
         run: |
           go vet ./...
           go test -race ./...
+      - name: Test canary
+        working-directory: canary
+        run: |
+          go vet ./...
+          go test -race ./...
 
   container:
     needs: test
@@ -65,3 +70,20 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+      - uses: docker/metadata-action@v5
+        id: canary_metadata
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-canary
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./canary
+          push: ${{ github.event_name != 'pull_request' }}
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.canary_metadata.outputs.tags }}
+          labels: ${{ steps.canary_metadata.outputs.labels }}

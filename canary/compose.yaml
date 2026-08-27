@@ -1,0 +1,15 @@
+services:
+  canary:
+    build: .
+    environment:
+      CANARY_HTTP_ADDR: :8081
+      CANARY_INTERVAL: 1m # Change to a Go duration such as 30s or 5m.
+      CANARY_TIMEOUT: 10s
+      CANARY_MAIL_DOMAIN: mail.example.com # Must match tmpmail's MAIL_DOMAIN.
+      CANARY_SMTP_ADDR: host.docker.internal:25
+      CANARY_API_URL: http://host.docker.internal:8080
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

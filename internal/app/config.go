@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ type Config struct {
 	MaxMessageBytes int64
 	MaxStorageBytes int64
 	MetricsEnabled  bool
+	HTTPLogHeaders  []string
 }
 
 func LoadConfig() (Config, error) {
@@ -37,7 +39,41 @@ func LoadConfig() (Config, error) {
 	if domain == "" || strings.ContainsAny(domain, "@ /\\") {
 		return Config{}, fmt.Errorf("MAIL_DOMAIN must be a domain name")
 	}
-	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MetricsEnabled: env("METRICS_ENABLED", "false") == "true"}, nil
+	logHeaders, err := parseHTTPLogHeaders(env("HTTP_LOG_HEADERS", "User-Agent"))
+	if err != nil {
+		return Config{}, fmt.Errorf("HTTP_LOG_HEADERS: %w", err)
+	}
+	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPLogHeaders: logHeaders}, nil
+}
+
+func parseHTTPLogHeaders(value string) ([]string, error) {
+	var headers []string
+	seen := make(map[string]struct{})
+	for _, header := range strings.Split(value, ",") {
+		header = strings.TrimSpace(header)
+		if !validHeaderName(header) {
+			return nil, fmt.Errorf("%q is not a valid HTTP header name", header)
+		}
+		canonical := http.CanonicalHeaderKey(header)
+		if _, ok := seen[canonical]; ok {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		headers = append(headers, canonical)
+	}
+	return headers, nil
+}
+
+func validHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, character := range name {
+		if !strings.ContainsRune("!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", character) {
+			return false
+		}
+	}
+	return true
 }
 
 func env(key, fallback string) string {
