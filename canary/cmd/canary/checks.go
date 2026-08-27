@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/textproto"
@@ -53,10 +54,18 @@ func (r *runner) run(ctx context.Context) {
 	}()
 }
 func (r *runner) runOnce(parent context.Context) {
+	log.Printf("canary run started")
 	ctx, cancel := context.WithTimeout(parent, r.cfg.Timeout)
 	defer cancel()
 	results := []checkResult{runAPIHealthCheck(ctx, r.cfg), runMailFlowCheck(ctx, r.cfg)}
 	status := "healthy"
+	for _, result := range results {
+		if result.Message == "" {
+			log.Printf("canary check=%s status=%s latency_ms=%d", result.Name, result.Status, result.LatencyMS)
+		} else {
+			log.Printf("canary check=%s status=%s latency_ms=%d error=%q", result.Name, result.Status, result.LatencyMS, result.Message)
+		}
+	}
 	for _, result := range results {
 		if result.Status != "healthy" {
 			status = "unhealthy"
@@ -66,6 +75,7 @@ func (r *runner) runOnce(parent context.Context) {
 	r.mu.Lock()
 	r.current = healthStatus{Status: status, LastCheckedAt: time.Now().UTC(), Checks: results}
 	r.mu.Unlock()
+	log.Printf("canary run completed status=%s", status)
 }
 func (r *runner) status() healthStatus { r.mu.RLock(); defer r.mu.RUnlock(); return r.current }
 
