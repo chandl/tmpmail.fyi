@@ -228,7 +228,7 @@ func requestLogger(next http.Handler, metricsEnabled bool, loggedHeaders []strin
 		}
 		log.Print(strings.Join(fields, " "))
 		if metricsEnabled {
-			observeHTTP(metricRoute(r.URL.Path), strconv.Itoa(status), elapsed.Seconds())
+			observeHTTP(metricRoute(r.URL.Path, r.Pattern), strconv.Itoa(status), elapsed.Seconds())
 		}
 	})
 }

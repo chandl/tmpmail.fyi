@@ -66,6 +66,17 @@ func TestRequestLoggerLogsConfiguredHeaders(t *testing.T) {
 	}
 }
 
+func TestInboxShortcutUsesStableMetricsRoute(t *testing.T) {
+	for _, inbox := range []string{"asdf", "another-inbox"} {
+		if route := metricRoute("/"+inbox, "GET /{inbox}"); route != "/{inbox}" {
+			t.Fatalf("expected stable inbox metric route, got %q", route)
+		}
+	}
+	if route := metricRoute("/privacy", "GET /privacy"); route != "/privacy" {
+		t.Fatalf("expected named route to remain distinct, got %q", route)
+	}
+}
+
 func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	store := testStore(t, time.Hour)
 	if _, err := store.Save("build@mail.test", "sender@example.org", []byte("Subject: hello\r\n\r\nbody")); err != nil {
