@@ -72,7 +72,12 @@ func NewHTTPServer(cfg Config, store *Store) http.Handler {
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		renderInbox(w, store, cfg.MailDomain, strings.TrimSpace(r.URL.Query().Get("inbox")), pageOffset(r.URL.Query().Get("offset")))
 	})
-	return requestLogger(securityHeaders(mux), cfg.MetricsEnabled, cfg.HTTPLogHeaders)
+	return requestLogger(
+		limitHTTPRequests(securityHeaders(mux), cfg.MaxHTTPRequests, cfg.MetricsEnabled),
+		cfg.MetricsEnabled,
+		cfg.HTTPAccessLogMode,
+		cfg.HTTPLogHeaders,
+	)
 }
 
 func serveFaviconAsset(name string) http.HandlerFunc {
@@ -118,7 +123,7 @@ const (
 	maxPageSize     = 100
 )
 
-func (s *apiServer) ListInboxMessages(w http.ResponseWriter, _ *http.Request, inbox api.Inbox, params api.ListInboxMessagesParams) {
+func (s *apiServer) ListInboxMessages(w http.ResponseWriter, r *http.Request, inbox api.Inbox, params api.ListInboxMessagesParams) {
 	limit := defaultPageSize
 	if params.Limit != nil {
 		limit = min(max(*params.Limit, 1), maxPageSize)
@@ -127,7 +132,7 @@ func (s *apiServer) ListInboxMessages(w http.ResponseWriter, _ *http.Request, in
 	if params.Offset != nil {
 		offset = max(*params.Offset, 0)
 	}
-	messages, hasMore, err := s.store.ListPage(string(inbox), limit, offset)
+	messages, hasMore, err := s.store.ListPageContext(r.Context(), string(inbox), limit, offset)
 	if err != nil {
 		http.Error(w, "storage error", http.StatusInternalServerError)
 		return
@@ -140,7 +145,7 @@ func (s *apiServer) ListInboxMessages(w http.ResponseWriter, _ *http.Request, in
 }
 
 func (s *apiServer) GetMessage(w http.ResponseWriter, r *http.Request, id string) {
-	message, err := s.store.Get(id)
+	message, err := s.store.GetContext(r.Context(), id)
 	if err == sql.ErrNoRows {
 		http.NotFound(w, r)
 		return
@@ -191,9 +196,13 @@ func securityHeaders(next http.Handler) http.Handler {
 type responseRecorder struct {
 	http.ResponseWriter
 	status int
+	bytes  int64
 }
 
 func (r *responseRecorder) WriteHeader(status int) {
+	if r.status != 0 {
+		return
+	}
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
 }
@@ -202,33 +211,66 @@ func (r *responseRecorder) Write(body []byte) (int, error) {
 	if r.status == 0 {
 		r.status = http.StatusOK
 	}
-	return r.ResponseWriter.Write(body)
+	n, err := r.ResponseWriter.Write(body)
+	r.bytes += int64(n)
+	return n, err
 }
 
-func requestLogger(next http.Handler, metricsEnabled bool, loggedHeaders []string) http.Handler {
+func (r *responseRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+func requestLogger(next http.Handler, metricsEnabled bool, accessLogMode string, loggedHeaders []string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		recorder := &responseRecorder{ResponseWriter: w}
+		if metricsEnabled {
+			httpRequestsInFlight.Inc()
+			defer httpRequestsInFlight.Dec()
+		}
 		next.ServeHTTP(recorder, r)
 		status := recorder.status
 		if status == 0 {
 			status = http.StatusOK
 		}
 		elapsed := time.Since(started)
-		fields := []string{
-			"[web]",
-			"method=" + r.Method,
-			"path=" + r.URL.Path,
-			"status=" + strconv.Itoa(status),
-			"duration_ms=" + strconv.FormatInt(elapsed.Milliseconds(), 10),
+		if r.Context().Err() != nil && metricsEnabled {
+			httpCanceled.Inc()
 		}
-		for _, header := range loggedHeaders {
-			field := strings.ToLower(strings.ReplaceAll(header, "-", "_"))
-			fields = append(fields, field+"="+strconv.Quote(r.Header.Get(header)))
+		if accessLogMode == "all" || (accessLogMode == "errors" && status >= http.StatusBadRequest) {
+			fields := []string{
+				"[web]",
+				"method=" + r.Method,
+				"path=" + r.URL.Path,
+				"status=" + strconv.Itoa(status),
+				"duration_ms=" + strconv.FormatInt(elapsed.Milliseconds(), 10),
+			}
+			for _, header := range loggedHeaders {
+				field := strings.ToLower(strings.ReplaceAll(header, "-", "_"))
+				fields = append(fields, field+"="+strconv.Quote(r.Header.Get(header)))
+			}
+			log.Print(strings.Join(fields, " "))
 		}
-		log.Print(strings.Join(fields, " "))
 		if metricsEnabled {
-			observeHTTP(metricRoute(r.URL.Path, r.Pattern), strconv.Itoa(status), elapsed.Seconds())
+			observeHTTP(metricRoute(r.URL.Path, r.Pattern), strconv.Itoa(status), recorder.bytes, elapsed.Seconds())
+		}
+	})
+}
+
+func limitHTTPRequests(next http.Handler, limit int, metricsEnabled bool) http.Handler {
+	if limit == 0 {
+		return next
+	}
+	requests := make(chan struct{}, limit)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case requests <- struct{}{}:
+			defer func() { <-requests }()
+			next.ServeHTTP(w, r)
+		default:
+			if metricsEnabled {
+				httpOverloadRejections.Inc()
+			}
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "service temporarily overloaded", http.StatusServiceUnavailable)
 		}
 	})
 }

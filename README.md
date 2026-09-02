@@ -54,14 +54,16 @@ METRICS_ADDR=127.0.0.1:9090
 MESSAGE_TTL=1h
 MAX_MESSAGE_BYTES=2097152
 MAX_STORAGE_BYTES=21474836480
-SMTP_MAX_CONNECTIONS_PER_IP=10 # Set to 0 to disable only the per-source SMTP connection limit.
+SMTP_MAX_CONNECTIONS=100 # Global concurrent SMTP-session admission limit.
+HTTP_MAX_CONCURRENT_REQUESTS=512 # Set to 0 only to disable HTTP overload shedding.
 METRICS_ENABLED=false # Start the separate metrics listener when true.
+HTTP_ACCESS_LOG_MODE=errors # all, errors, or off; errors avoids hot-path log pressure.
 HTTP_LOG_HEADERS=User-Agent # Comma-separated request headers to include in HTTP logs.
 ```
 
 `MAX_MESSAGE_BYTES` defaults to 2 MiB and `MAX_STORAGE_BYTES` defaults to 20 GiB. The global storage cap is enforced on every save: expired messages are removed first, then the oldest messages are evicted when necessary. A cleanup job also runs at startup and every minute.
 
-SMTP allows at most 100 concurrent sessions globally and 10 per source IP by default. Set `SMTP_MAX_CONNECTIONS_PER_IP=0` only for a controlled load test when the load generator shares one source IP; the global 100-session safeguard remains enabled.
+SMTP allows at most 100 concurrent sessions globally by default. There is intentionally no source-IP limit: SMTP deployments commonly see a proxy address rather than the originating sender. Set `SMTP_MAX_CONNECTIONS` according to the host's measured capacity; rejected connections receive a transient `421 4.3.2` response when possible. HTTP applies an independent 512-request concurrency limit by default and responds with `503` plus `Retry-After` under pressure.
 
 `MAIL_DOMAIN` is required. Only recipients at that domain are accepted; every local part is a valid disposable inbox.
 
@@ -103,9 +105,9 @@ GET /openapi.json
 
 Set `METRICS_ENABLED=true` to start a dedicated Prometheus listener at `METRICS_ADDR`, which defaults to `127.0.0.1:9090`. It serves only `GET /metrics`; `GET /metrics` on the public UI/API listener returns `404`.
 
-The Compose file changes `METRICS_ADDR` to `:9090`, but does not publish it to the host, so a Prometheus container on the private Compose network can scrape `tmpmail:9090`. Do not add a public `9090` port mapping. Metrics cover SMTP outcomes, accepted bytes, active sessions, and limit rejections; normalized HTTP request counts and duration; cleanup activity; current stored message/byte usage; and storage or cleanup errors. Alert on sustained SMTP connection-limit or line-limit rejections.
+The Compose file changes `METRICS_ADDR` to `:9090`, but does not publish it to the host, so a Prometheus container on the private Compose network can scrape `tmpmail:9090`. Do not add a public `9090` port mapping. Metrics cover SMTP admission/outcomes, accepted bytes, active sessions, and limit rejections; normalized HTTP request counts, outcome-class latency, response bytes, in-flight requests, cancellations, and overload rejections; cleanup activity; current stored message/byte usage; SQLite pool state; and storage or cleanup errors. Storage metrics distinguish persistence stages from writer-lock wait. Alert on sustained SMTP or HTTP admission rejections, storage lock wait, and storage errors.
 
-tmpmail logs successful SMTP receives, HTTP requests, and cleanup work. Logs do not include message bodies. HTTP request logs include `method`, `path`, `status`, and `duration_ms`, plus the comma-separated request-header allowlist in `HTTP_LOG_HEADERS`. It defaults to `User-Agent`; use `HTTP_LOG_HEADERS=User-Agent,CF-Connecting-IP` behind a trusted Cloudflare and Traefik path to log the original visitor IP. Do not enable IP-header logging unless the application is reachable only through that trusted proxy path.
+tmpmail logs successful SMTP receives and cleanup work. HTTP request logging defaults to errors only, avoiding a synchronous log write for every successful request during a traffic burst; set `HTTP_ACCESS_LOG_MODE=all` for temporary diagnostics or `off` when an edge proxy supplies access logs. HTTP entries include `method`, `path`, `status`, and `duration_ms`, plus the comma-separated request-header allowlist in `HTTP_LOG_HEADERS`. Do not use forwarding headers for SMTP admission: source-IP limits are deliberately not implemented.
 
 The complete contract is in [openapi.yaml](openapi.yaml).
 

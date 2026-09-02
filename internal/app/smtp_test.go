@@ -46,42 +46,10 @@ func TestReadDataRejectsOversizedMessage(t *testing.T) {
 	}
 }
 
-func TestSMTPPerSourceConnectionLimit(t *testing.T) {
-	const limit = 10
-	server := NewSMTPServer(Config{MaxSMTPConnectionsPerIP: limit}, nil)
-	address := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 2525}
-	var source string
-	for i := 0; i < limit; i++ {
-		var ok bool
-		source, ok = server.acquireSource(address)
-		if !ok {
-			t.Fatalf("connection %d unexpectedly rejected", i+1)
-		}
-	}
-	if _, ok := server.acquireSource(address); ok {
-		t.Fatal("expected per-source connection limit")
-	}
-	for i := 0; i < limit; i++ {
-		server.releaseSource(source)
-	}
-	if _, ok := server.acquireSource(address); !ok {
-		t.Fatal("expected released source slot to be reusable")
-	}
-}
-
-func TestSMTPPerSourceConnectionLimitCanBeDisabled(t *testing.T) {
-	server := NewSMTPServer(Config{MaxSMTPConnectionsPerIP: 0}, nil)
-	address := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 2525}
-	var source string
-	for i := 0; i < 20; i++ {
-		var ok bool
-		source, ok = server.acquireSource(address)
-		if !ok {
-			t.Fatalf("connection %d unexpectedly rejected", i+1)
-		}
-	}
-	for i := 0; i < 20; i++ {
-		server.releaseSource(source)
+func TestSMTPUsesConfigurableGlobalConnectionLimit(t *testing.T) {
+	server := NewSMTPServer(Config{MaxSMTPConnections: 17}, nil)
+	if got := cap(server.sessions); got != 17 {
+		t.Fatalf("global connection limit = %d, want 17", got)
 	}
 }
 

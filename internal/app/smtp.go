@@ -15,12 +15,12 @@ import (
 )
 
 const (
-	maxSMTPConnections             = 100
-	defaultMaxSMTPConnectionsPerIP = 10
-	maxSMTPCommandLineBytes        = 8 << 10
-	maxSMTPDataLineBytes           = 8 << 10
-	maxSMTPRecipients              = 100
-	smtpSessionTimeout             = 2 * time.Minute
+	defaultMaxSMTPConnections   = 100
+	maxConcurrentSMTPRejections = 16
+	maxSMTPCommandLineBytes     = 8 << 10
+	maxSMTPDataLineBytes        = 8 << 10
+	maxSMTPRecipients           = 100
+	smtpSessionTimeout          = 2 * time.Minute
 )
 
 var (
@@ -34,12 +34,15 @@ type SMTPServer struct {
 	listener net.Listener
 	mu       sync.Mutex
 	sessions chan struct{}
-	sourceMu sync.Mutex
-	sources  map[string]int
+	rejects  chan struct{}
 }
 
 func NewSMTPServer(cfg Config, store *Store) *SMTPServer {
-	return &SMTPServer{cfg: cfg, store: store, sessions: make(chan struct{}, maxSMTPConnections), sources: make(map[string]int)}
+	limit := cfg.MaxSMTPConnections
+	if limit == 0 {
+		limit = defaultMaxSMTPConnections
+	}
+	return &SMTPServer{cfg: cfg, store: store, sessions: make(chan struct{}, limit), rejects: make(chan struct{}, maxConcurrentSMTPRejections)}
 }
 
 func (s *SMTPServer) ListenAndServe(ctx context.Context) error {
@@ -50,7 +53,7 @@ func (s *SMTPServer) ListenAndServe(ctx context.Context) error {
 	s.mu.Lock()
 	s.listener = listener
 	s.mu.Unlock()
-	log.Printf("SMTP listening on %s for %s (global_connection_limit=%d per_ip_connection_limit=%d)", s.cfg.SMTPAddr, s.cfg.MailDomain, maxSMTPConnections, s.cfg.MaxSMTPConnectionsPerIP)
+	log.Printf("SMTP listening on %s for %s (global_connection_limit=%d)", s.cfg.SMTPAddr, s.cfg.MailDomain, cap(s.sessions))
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -63,68 +66,47 @@ func (s *SMTPServer) ListenAndServe(ctx context.Context) error {
 		}
 		select {
 		case s.sessions <- struct{}{}:
-			source, ok := s.acquireSource(conn.RemoteAddr())
-			if !ok {
-				<-s.sessions
-				s.rejectConnection(conn, "per_ip_limit")
-				continue
+			if s.cfg.MetricsEnabled {
+				smtpConnectionsTotal.WithLabelValues("accepted").Inc()
 			}
-			go func(conn net.Conn, source string) {
+			go func(conn net.Conn) {
+				sessionStarted := time.Now()
 				defer func() {
-					s.releaseSource(source)
 					<-s.sessions
 					if s.cfg.MetricsEnabled {
 						smtpConnections.Dec()
+						smtpSessionDuration.WithLabelValues("handled").Observe(time.Since(sessionStarted).Seconds())
 					}
 				}()
 				if s.cfg.MetricsEnabled {
 					smtpConnections.Inc()
 				}
 				s.handle(conn)
-			}(conn, source)
+			}(conn)
 		default:
-			s.rejectConnection(conn, "global_limit")
+			s.scheduleRejection(conn)
 		}
 	}
 }
 
-func (s *SMTPServer) rejectConnection(conn net.Conn, reason string) {
+func (s *SMTPServer) scheduleRejection(conn net.Conn) {
 	if s.cfg.MetricsEnabled {
-		smtpRejections.WithLabelValues(reason).Inc()
+		smtpRejections.WithLabelValues("global_limit").Inc()
+		smtpConnectionsTotal.WithLabelValues("rejected").Inc()
 	}
-	// Do not allow a connection flood to create unbounded goroutines.
-	_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
-	_, _ = io.WriteString(conn, "421 too many concurrent connections\r\n")
-	_ = conn.Close()
-}
-
-func (s *SMTPServer) acquireSource(addr net.Addr) (string, bool) {
-	source := sourceAddress(addr)
-	s.sourceMu.Lock()
-	defer s.sourceMu.Unlock()
-	if s.cfg.MaxSMTPConnectionsPerIP > 0 && s.sources[source] >= s.cfg.MaxSMTPConnectionsPerIP {
-		return source, false
+	select {
+	case s.rejects <- struct{}{}:
+		go func() {
+			defer func() { <-s.rejects }()
+			_ = conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+			_, _ = io.WriteString(conn, "421 4.3.2 service temporarily overloaded\r\n")
+			_ = conn.Close()
+		}()
+	default:
+		// The bounded response workers are busy. Closing immediately preserves
+		// the accept loop during a connection flood.
+		_ = conn.Close()
 	}
-	s.sources[source]++
-	return source, true
-}
-
-func (s *SMTPServer) releaseSource(source string) {
-	s.sourceMu.Lock()
-	defer s.sourceMu.Unlock()
-	if s.sources[source] <= 1 {
-		delete(s.sources, source)
-		return
-	}
-	s.sources[source]--
-}
-
-func sourceAddress(addr net.Addr) string {
-	host, _, err := net.SplitHostPort(addr.String())
-	if err == nil {
-		return host
-	}
-	return addr.String()
 }
 
 func (s *SMTPServer) Close() error {

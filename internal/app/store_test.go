@@ -47,8 +47,10 @@ func TestStorageOperationsEmitLoadTestMetrics(t *testing.T) {
 	NewMetricsServer().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	for _, metric := range []string{
 		"tmpmail_storage_save_duration_seconds",
+		"tmpmail_storage_save_stage_duration_seconds",
 		"tmpmail_storage_write_lock_wait_seconds",
 		"tmpmail_storage_read_duration_seconds",
+		"tmpmail_storage_db_open_connections",
 		"tmpmail_cleanup_duration_seconds",
 	} {
 		if !strings.Contains(response.Body.String(), metric) {

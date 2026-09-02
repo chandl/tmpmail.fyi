@@ -65,9 +65,8 @@ reuse a run ID unless you intentionally want to add to its existing corpus.
 
 ## Run
 
-For a first production run, temporarily set
-`SMTP_MAX_CONNECTIONS_PER_IP=0`, confirm the private Prometheus endpoint is
-being scraped, and start at a low rate:
+For a first production run, confirm the private Prometheus endpoint and
+host/container telemetry are being scraped, then start at a low rate:
 
 ```sh
 .venv/bin/locust -f loadtest/locustfile.py \
@@ -77,9 +76,12 @@ being scraped, and start at a low rate:
 ```
 
 Run successively at 10, 25, 50, 75, and 100 users only after reviewing the
-previous result. The global 100-session SMTP cap remains active. Restore
-`SMTP_MAX_CONNECTIONS_PER_IP=10` after testing.
+previous result. Hold each level for 10–15 minutes rather than performing one
+unbounded ramp. Run HTTP-read-only, SMTP-only, and mixed workloads separately
+before the mixed test. The configurable global SMTP cap remains active.
 
 The report includes individual SMTP send timing, normal HTTP request timing, and
-three flow results: `read-inbox`, `write-message`, and `smtp-to-read`. Stop on
-SMTP `421` responses, storage errors, or sustained tail-latency growth.
+three flow results: `read-inbox`, `write-message`, and `smtp-to-read`. Flow
+events overlap their component requests, so do not use Locust's aggregate row
+as endpoint throughput. Stop on SMTP `421`, HTTP `503`, storage errors, or
+sustained tail-latency growth.

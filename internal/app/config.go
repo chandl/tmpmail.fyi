@@ -10,17 +10,19 @@ import (
 )
 
 type Config struct {
-	MailDomain              string
-	DataDir                 string
-	SMTPAddr                string
-	HTTPAddr                string
-	MetricsAddr             string
-	MessageTTL              time.Duration
-	MaxMessageBytes         int64
-	MaxStorageBytes         int64
-	MaxSMTPConnectionsPerIP int
-	MetricsEnabled          bool
-	HTTPLogHeaders          []string
+	MailDomain         string
+	DataDir            string
+	SMTPAddr           string
+	HTTPAddr           string
+	MetricsAddr        string
+	MessageTTL         time.Duration
+	MaxMessageBytes    int64
+	MaxStorageBytes    int64
+	MaxSMTPConnections int
+	MaxHTTPRequests    int
+	MetricsEnabled     bool
+	HTTPAccessLogMode  string
+	HTTPLogHeaders     []string
 }
 
 func LoadConfig() (Config, error) {
@@ -36,9 +38,13 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("MAX_STORAGE_BYTES: %w", err)
 	}
-	maxSMTPConnectionsPerIP, err := nonNegativeInt(env("SMTP_MAX_CONNECTIONS_PER_IP", strconv.Itoa(defaultMaxSMTPConnectionsPerIP)))
+	maxSMTPConnections, err := positiveInt(env("SMTP_MAX_CONNECTIONS", strconv.Itoa(defaultMaxSMTPConnections)))
 	if err != nil {
-		return Config{}, fmt.Errorf("SMTP_MAX_CONNECTIONS_PER_IP: %w", err)
+		return Config{}, fmt.Errorf("SMTP_MAX_CONNECTIONS: %w", err)
+	}
+	maxHTTPRequests, err := nonNegativeInt(env("HTTP_MAX_CONCURRENT_REQUESTS", "512"))
+	if err != nil {
+		return Config{}, fmt.Errorf("HTTP_MAX_CONCURRENT_REQUESTS: %w", err)
 	}
 	domain := strings.ToLower(strings.TrimSpace(os.Getenv("MAIL_DOMAIN")))
 	if domain == "" || strings.ContainsAny(domain, "@ /\\") {
@@ -48,7 +54,11 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("HTTP_LOG_HEADERS: %w", err)
 	}
-	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnectionsPerIP: maxSMTPConnectionsPerIP, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPLogHeaders: logHeaders}, nil
+	accessLogMode := strings.ToLower(env("HTTP_ACCESS_LOG_MODE", "errors"))
+	if accessLogMode != "all" && accessLogMode != "errors" && accessLogMode != "off" {
+		return Config{}, fmt.Errorf("HTTP_ACCESS_LOG_MODE must be all, errors, or off")
+	}
+	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders}, nil
 }
 
 func parseHTTPLogHeaders(value string) ([]string, error) {

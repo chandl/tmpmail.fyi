@@ -30,10 +30,12 @@ type Message struct {
 }
 
 type Store struct {
-	db      *sql.DB
-	msgDir  string
-	cfg     Config
-	writeMu sync.Mutex
+	db             *sql.DB
+	msgDir         string
+	cfg            Config
+	writeMu        sync.Mutex
+	storedBytes    int64
+	storedMessages int64
 }
 
 type cleanupStats struct {
@@ -47,13 +49,16 @@ func OpenStore(dbPath, msgDir string, cfg Config) (*Store, error) {
 	if err := os.MkdirAll(msgDir, 0o750); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", dbPath)
+	dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	// WAL permits concurrent readers. Writes remain serialized by writeMu so
+	// SQLite still has one writer while message reads do not queue behind it.
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(8)
 	for _, statement := range []string{
-		"PRAGMA journal_mode=WAL", "PRAGMA busy_timeout=5000",
 		`CREATE TABLE IF NOT EXISTS messages (
 			id TEXT PRIMARY KEY, recipient TEXT NOT NULL, sender TEXT NOT NULL,
 			subject TEXT NOT NULL, received_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
@@ -67,10 +72,13 @@ func OpenStore(dbPath, msgDir string, cfg Config) (*Store, error) {
 		}
 	}
 	store := &Store{db: db, msgDir: msgDir, cfg: cfg}
+	if err := store.loadStorageUsage(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if cfg.MetricsEnabled {
-		if err := store.updateStorageMetrics(); err != nil {
-			storageErrors.WithLabelValues("metrics").Inc()
-		}
+		store.updateStorageMetrics()
+		store.observeDBStats()
 	}
 	return store, nil
 }
@@ -109,11 +117,18 @@ func (s *Store) Save(recipient, sender string, raw []byte) (message Message, err
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
+	fileStarted := time.Now()
 	if _, err = tmp.Write(raw); err == nil {
 		err = tmp.Chmod(0o600)
 	}
+	if err == nil {
+		err = tmp.Sync()
+	}
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
+	}
+	if s.cfg.MetricsEnabled {
+		storageSaveStageDuration.WithLabelValues("file", metricResult(err)).Observe(time.Since(fileStarted).Seconds())
 	}
 	if err != nil {
 		return Message{}, err
@@ -121,19 +136,34 @@ func (s *Store) Save(recipient, sender string, raw []byte) (message Message, err
 	if err = os.Rename(tmpName, path); err != nil {
 		return Message{}, err
 	}
+	dbStarted := time.Now()
 	if _, err = s.db.Exec(`INSERT INTO messages (id, recipient, sender, subject, received_at, expires_at, size, path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, message.ID, message.Recipient, message.From, message.Subject, message.Received.Unix(), message.ExpiresAt.Unix(), message.Size, path); err != nil {
-		os.Remove(path)
+		s.removeMessageFile(path)
+		if s.cfg.MetricsEnabled {
+			storageSaveStageDuration.WithLabelValues("database", metricResult(err)).Observe(time.Since(dbStarted).Seconds())
+		}
 		return Message{}, err
 	}
-	stats, err := s.enforceLimitLocked()
-	if err != nil {
-		return Message{}, err
+	if s.cfg.MetricsEnabled {
+		storageSaveStageDuration.WithLabelValues("database", "success").Observe(time.Since(dbStarted).Seconds())
+	}
+	s.storedBytes += message.Size
+	s.storedMessages++
+	stats := cleanupStats{}
+	if s.storedBytes > s.cfg.MaxStorageBytes {
+		limitStarted := time.Now()
+		stats, err = s.enforceLimitLocked()
+		if s.cfg.MetricsEnabled {
+			storageSaveStageDuration.WithLabelValues("storage_limit", metricResult(err)).Observe(time.Since(limitStarted).Seconds())
+		}
+		if err != nil {
+			return Message{}, err
+		}
 	}
 	logCleanup(stats, s.cfg.MetricsEnabled)
 	if s.cfg.MetricsEnabled {
-		if err := s.updateStorageMetrics(); err != nil {
-			storageErrors.WithLabelValues("metrics").Inc()
-		}
+		s.updateStorageMetrics()
+		s.observeDBStats()
 	}
 	return message, nil
 }
@@ -144,13 +174,18 @@ func (s *Store) List(recipient string) ([]Message, error) {
 }
 
 func (s *Store) ListPage(recipient string, limit, offset int) (messages []Message, hasMore bool, err error) {
+	return s.ListPageContext(context.Background(), recipient, limit, offset)
+}
+
+func (s *Store) ListPageContext(ctx context.Context, recipient string, limit, offset int) (messages []Message, hasMore bool, err error) {
 	started := time.Now()
 	defer func() {
 		if s.cfg.MetricsEnabled {
 			storageReadDuration.WithLabelValues("list", metricResult(err)).Observe(time.Since(started).Seconds())
+			s.observeDBStats()
 		}
 	}()
-	rows, err := s.db.Query(`SELECT id, recipient, sender, subject, received_at, expires_at, size FROM messages WHERE recipient = ? AND expires_at > ? ORDER BY received_at DESC, id DESC LIMIT ? OFFSET ?`, recipient, time.Now().Unix(), limit+1, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, recipient, sender, subject, received_at, expires_at, size FROM messages WHERE recipient = ? AND expires_at > ? ORDER BY received_at DESC, id DESC LIMIT ? OFFSET ?`, recipient, time.Now().Unix(), limit+1, offset)
 	if err != nil {
 		return nil, false, err
 	}
@@ -175,15 +210,20 @@ func (s *Store) ListPage(recipient string, limit, offset int) (messages []Messag
 }
 
 func (s *Store) Get(id string) (m Message, err error) {
+	return s.GetContext(context.Background(), id)
+}
+
+func (s *Store) GetContext(ctx context.Context, id string) (m Message, err error) {
 	started := time.Now()
 	defer func() {
 		if s.cfg.MetricsEnabled {
 			storageReadDuration.WithLabelValues("get", metricResult(err)).Observe(time.Since(started).Seconds())
+			s.observeDBStats()
 		}
 	}()
 	var received, expires int64
 	var path string
-	err = s.db.QueryRow(`SELECT id, recipient, sender, subject, received_at, expires_at, size, path FROM messages WHERE id = ? AND expires_at > ?`, id, time.Now().Unix()).Scan(&m.ID, &m.Recipient, &m.From, &m.Subject, &received, &expires, &m.Size, &path)
+	err = s.db.QueryRowContext(ctx, `SELECT id, recipient, sender, subject, received_at, expires_at, size, path FROM messages WHERE id = ? AND expires_at > ?`, id, time.Now().Unix()).Scan(&m.ID, &m.Recipient, &m.From, &m.Subject, &received, &expires, &m.Size, &path)
 	if err != nil {
 		return Message{}, err
 	}
@@ -221,9 +261,8 @@ func (s *Store) Cleanup() (err error) {
 	if err == nil {
 		logCleanup(stats, s.cfg.MetricsEnabled)
 		if s.cfg.MetricsEnabled {
-			if err := s.updateStorageMetrics(); err != nil {
-				storageErrors.WithLabelValues("metrics").Inc()
-			}
+			s.updateStorageMetrics()
+			s.observeDBStats()
 		}
 	} else if s.cfg.MetricsEnabled {
 		storageErrors.WithLabelValues("cleanup").Inc()
@@ -232,13 +271,18 @@ func (s *Store) Cleanup() (err error) {
 	return err
 }
 
-func (s *Store) updateStorageMetrics() error {
-	var bytes, messages int64
-	if err := s.db.QueryRow("SELECT COALESCE(SUM(size), 0), COUNT(*) FROM messages").Scan(&bytes, &messages); err != nil {
-		return err
-	}
-	observeStorageUsage(bytes, messages)
-	return nil
+func (s *Store) loadStorageUsage() error {
+	return s.db.QueryRow("SELECT COALESCE(SUM(size), 0), COUNT(*) FROM messages").Scan(&s.storedBytes, &s.storedMessages)
+}
+
+func (s *Store) updateStorageMetrics() {
+	observeStorageUsage(s.storedBytes, s.storedMessages)
+}
+
+func (s *Store) observeDBStats() {
+	stats := s.db.Stats()
+	storageDBOpenConnections.Set(float64(stats.OpenConnections))
+	storageDBInUseConnections.Set(float64(stats.InUse))
 }
 
 func (s *Store) enforceLimitLocked() (cleanupStats, error) {
@@ -246,11 +290,7 @@ func (s *Store) enforceLimitLocked() (cleanupStats, error) {
 	if err != nil {
 		return cleanupStats{}, err
 	}
-	var total int64
-	if err := s.db.QueryRow("SELECT COALESCE(SUM(size), 0) FROM messages").Scan(&total); err != nil {
-		return cleanupStats{}, err
-	}
-	for total > s.cfg.MaxStorageBytes {
+	for s.storedBytes > s.cfg.MaxStorageBytes {
 		var id, path string
 		var size int64
 		err := s.db.QueryRow("SELECT id, path, size FROM messages ORDER BY received_at LIMIT 1").Scan(&id, &path, &size)
@@ -263,8 +303,9 @@ func (s *Store) enforceLimitLocked() (cleanupStats, error) {
 		if _, err := s.db.Exec("DELETE FROM messages WHERE id = ?", id); err != nil {
 			return cleanupStats{}, err
 		}
-		_ = os.Remove(path)
-		total -= size
+		s.removeMessageFile(path)
+		s.storedBytes -= size
+		s.storedMessages--
 		stats.Evicted++
 		stats.EvictedBytes += size
 	}
@@ -299,7 +340,9 @@ func (s *Store) cleanupLocked(before int64) (cleanupStats, error) {
 		if _, err := s.db.Exec("DELETE FROM messages WHERE id = ?", m.id); err != nil {
 			return cleanupStats{}, err
 		}
-		_ = os.Remove(m.path)
+		s.removeMessageFile(m.path)
+		s.storedBytes -= m.size
+		s.storedMessages--
 		stats.Expired++
 		stats.ExpiredBytes += m.size
 	}
@@ -315,6 +358,15 @@ func logCleanup(stats cleanupStats, metricsEnabled bool) {
 	}
 	if metricsEnabled {
 		observeCleanup(stats)
+	}
+}
+
+func (s *Store) removeMessageFile(path string) {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		log.Printf("remove message file %s: %v", path, err)
+		if s.cfg.MetricsEnabled {
+			storageErrors.WithLabelValues("remove_file").Inc()
+		}
 	}
 }
 

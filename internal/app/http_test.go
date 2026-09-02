@@ -24,7 +24,7 @@ func TestRequestLoggerLogsMillisecondsAndUserAgentWithoutRemoteAddress(t *testin
 	request.Header.Set("User-Agent", "tmpmail-test/1.0")
 	requestLogger(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
-	}), false, []string{"User-Agent"}).ServeHTTP(httptest.NewRecorder(), request)
+	}), false, "all", []string{"User-Agent"}).ServeHTTP(httptest.NewRecorder(), request)
 
 	entry := output.String()
 	if !regexp.MustCompile(`duration_ms=\d+`).MatchString(entry) {
@@ -59,10 +59,48 @@ func TestRequestLoggerLogsConfiguredHeaders(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.Header.Set("CF-Connecting-IP", "198.51.100.10")
-	requestLogger(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), false, []string{"CF-Connecting-IP"}).ServeHTTP(httptest.NewRecorder(), request)
+	requestLogger(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), false, "all", []string{"CF-Connecting-IP"}).ServeHTTP(httptest.NewRecorder(), request)
 
 	if !strings.Contains(output.String(), `cf_connecting_ip="198.51.100.10"`) {
 		t.Fatalf("expected configured header, got %q", output.String())
+	}
+}
+
+func TestHTTPConcurrencyLimitReturnsRetryableOverload(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	handler := limitHTTPRequests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(entered)
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}), 1, false)
+
+	firstDone := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+		close(firstDone)
+	}()
+	<-entered
+	overloaded := httptest.NewRecorder()
+	handler.ServeHTTP(overloaded, httptest.NewRequest(http.MethodGet, "/", nil))
+	if overloaded.Code != http.StatusServiceUnavailable || overloaded.Header().Get("Retry-After") != "1" {
+		t.Fatalf("expected retryable overload, got status=%d retry-after=%q", overloaded.Code, overloaded.Header().Get("Retry-After"))
+	}
+	close(release)
+	<-firstDone
+}
+
+func TestRequestMetricsIncludeOutcomeAndResponseBytes(t *testing.T) {
+	store := testStore(t, time.Hour)
+	handler := NewHTTPServer(Config{MailDomain: "mail.test", MetricsEnabled: true, HTTPAccessLogMode: "off"}, store)
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/privacy", nil))
+
+	metrics := httptest.NewRecorder()
+	NewMetricsServer().ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, metric := range []string{"tmpmail_http_response_bytes_total", "tmpmail_http_request_duration_seconds_bucket", `outcome="2xx"`, `route="/privacy"`} {
+		if !strings.Contains(metrics.Body.String(), metric) {
+			t.Fatalf("expected %s in metrics output", metric)
+		}
 	}
 }
 
