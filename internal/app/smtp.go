@@ -1,101 +1,138 @@
 package app
 
 import (
-	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
-	"net/mail"
+	"os"
 	"strings"
 	"sync"
 	"time"
+
+	smtp "github.com/emersion/go-smtp"
 )
 
 const (
 	defaultMaxSMTPConnections   = 100
 	maxConcurrentSMTPRejections = 16
 	maxSMTPCommandLineBytes     = 8 << 10
-	maxSMTPDataLineBytes        = 8 << 10
 	maxSMTPRecipients           = 100
 	smtpSessionTimeout          = 2 * time.Minute
-)
-
-var (
-	errSMTPLineTooLong = errors.New("SMTP line too long")
-	errMessageTooLarge = errors.New("message too large")
 )
 
 type SMTPServer struct {
 	cfg      Config
 	store    *Store
-	listener net.Listener
-	mu       sync.Mutex
+	server   *smtp.Server
 	sessions chan struct{}
 	rejects  chan struct{}
 	sourceMu sync.Mutex
 	sources  map[string]int
+	tlsCert  *tlsCertificateReloader
 }
 
-func NewSMTPServer(cfg Config, store *Store) *SMTPServer {
+func NewSMTPServer(cfg Config, store *Store) (*SMTPServer, error) {
 	limit := cfg.MaxSMTPConnections
 	if limit == 0 {
 		limit = defaultMaxSMTPConnections
 	}
-	return &SMTPServer{cfg: cfg, store: store, sessions: make(chan struct{}, limit), rejects: make(chan struct{}, maxConcurrentSMTPRejections), sources: make(map[string]int)}
+	server := &SMTPServer{cfg: cfg, store: store, sessions: make(chan struct{}, limit), rejects: make(chan struct{}, maxConcurrentSMTPRejections), sources: make(map[string]int)}
+	if cfg.SMTPTLSCertFile != "" {
+		reloader, err := newTLSCertificateReloader(cfg.SMTPTLSCertFile, cfg.SMTPTLSKeyFile, cfg.MailDomain)
+		if err != nil {
+			return nil, fmt.Errorf("load SMTP TLS certificate: %w", err)
+		}
+		server.tlsCert = reloader
+	}
+	protocolServer := smtp.NewServer(smtp.BackendFunc(func(conn *smtp.Conn) (smtp.Session, error) {
+		return &smtpSession{server: server, sourceIP: sourceAddress(conn.Conn().RemoteAddr())}, nil
+	}))
+	protocolServer.Domain = cfg.MailDomain
+	protocolServer.MaxRecipients = maxSMTPRecipients
+	protocolServer.MaxMessageBytes = cfg.MaxMessageBytes
+	protocolServer.MaxLineLength = maxSMTPCommandLineBytes
+	protocolServer.ReadTimeout = smtpSessionTimeout
+	protocolServer.WriteTimeout = smtpSessionTimeout
+	protocolServer.TLSConfig = server.tlsConfig()
+	server.server = protocolServer
+	return server, nil
 }
 
+// ListenAndServe delegates SMTP parsing, command ordering, DATA decoding, and
+// STARTTLS state handling to emersion/go-smtp. Admission remains local so the
+// per-source connection limit applies before the protocol server allocates a
+// session.
 func (s *SMTPServer) ListenAndServe(ctx context.Context) error {
+	_ = ctx // Shutdown is driven by Close so go-smtp can close active sessions.
 	listener, err := net.Listen("tcp", s.cfg.SMTPAddr)
 	if err != nil {
 		return fmt.Errorf("SMTP listen %s: %w", s.cfg.SMTPAddr, err)
 	}
-	s.mu.Lock()
-	s.listener = listener
-	s.mu.Unlock()
 	log.Printf("SMTP listening on %s for %s (global_connection_limit=%d)", s.cfg.SMTPAddr, s.cfg.MailDomain, cap(s.sessions))
+	return s.server.Serve(&smtpAdmissionListener{Listener: listener, server: s})
+}
+
+func (s *SMTPServer) Close() error {
+	err := s.server.Close()
+	if errors.Is(err, smtp.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
+
+type smtpAdmissionListener struct {
+	net.Listener
+	server *SMTPServer
+}
+
+func (l *smtpAdmissionListener) Accept() (net.Conn, error) {
 	for {
-		conn, err := listener.Accept()
+		conn, err := l.Listener.Accept()
 		if err != nil {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-				return err
-			}
+			return nil, err
 		}
 		select {
-		case s.sessions <- struct{}{}:
+		case l.server.sessions <- struct{}{}:
 			source := sourceAddress(conn.RemoteAddr())
-			if !s.acquireSource(source) {
-				<-s.sessions
-				s.scheduleRejection(conn, "per_ip_limit")
+			if !l.server.acquireSource(source) {
+				<-l.server.sessions
+				l.server.scheduleRejection(conn, "per_ip_limit")
 				continue
 			}
-			if s.cfg.MetricsEnabled {
+			if l.server.cfg.MetricsEnabled {
 				smtpConnectionsTotal.WithLabelValues("accepted").Inc()
+				smtpConnections.Inc()
 			}
-			go func(conn net.Conn) {
-				sessionStarted := time.Now()
-				defer func() {
-					s.releaseSource(source)
-					<-s.sessions
-					if s.cfg.MetricsEnabled {
-						smtpConnections.Dec()
-						smtpSessionDuration.WithLabelValues("handled").Observe(time.Since(sessionStarted).Seconds())
-					}
-				}()
-				if s.cfg.MetricsEnabled {
-					smtpConnections.Inc()
+			started := time.Now()
+			return &admittedSMTPConn{Conn: conn, release: func() {
+				l.server.releaseSource(source)
+				<-l.server.sessions
+				if l.server.cfg.MetricsEnabled {
+					smtpConnections.Dec()
+					smtpSessionDuration.WithLabelValues("handled").Observe(time.Since(started).Seconds())
 				}
-				s.handle(conn)
-			}(conn)
+			}}, nil
 		default:
-			s.scheduleRejection(conn, "global_limit")
+			l.server.scheduleRejection(conn, "global_limit")
 		}
 	}
+}
+
+type admittedSMTPConn struct {
+	net.Conn
+	release func()
+	once    sync.Once
+}
+
+func (c *admittedSMTPConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(c.release)
+	return err
 }
 
 func (s *SMTPServer) scheduleRejection(conn net.Conn, reason string) {
@@ -112,8 +149,6 @@ func (s *SMTPServer) scheduleRejection(conn net.Conn, reason string) {
 			_ = conn.Close()
 		}()
 	default:
-		// The bounded response workers are busy. Closing immediately preserves
-		// the accept loop during a connection flood.
 		_ = conn.Close()
 	}
 }
@@ -146,151 +181,69 @@ func sourceAddress(addr net.Addr) string {
 	return addr.String()
 }
 
-func (s *SMTPServer) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.listener != nil {
-		return s.listener.Close()
+type smtpSession struct {
+	server     *SMTPServer
+	sourceIP   string
+	sender     string
+	recipients []string
+}
+
+func (s *smtpSession) Reset() { s.sender, s.recipients = "", nil }
+
+func (s *smtpSession) Logout() error { return nil }
+
+func (s *smtpSession) Mail(from string, _ *smtp.MailOptions) error {
+	s.sender, s.recipients = from, nil
+	return nil
+}
+
+func (s *smtpSession) Rcpt(to string, _ *smtp.RcptOptions) error {
+	if !s.server.accepts(to) {
+		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "unknown recipient domain"}
+	}
+	if !containsRecipient(s.recipients, to) {
+		s.recipients = append(s.recipients, to)
 	}
 	return nil
 }
 
-func (s *SMTPServer) handle(conn net.Conn) {
-	defer conn.Close()
-	refreshDeadline := func() { _ = conn.SetDeadline(time.Now().Add(smtpSessionTimeout)) }
-	refreshDeadline()
-	r := bufio.NewReader(conn)
-	w := bufio.NewWriter(conn)
-	defer w.Flush()
-	write := func(code int, message string) { fmt.Fprintf(w, "%d %s\r\n", code, message); w.Flush() }
-	write(220, "tmpmail ESMTP ready")
-	var sender string
-	var hasMail bool
-	var recipients []string
-	for {
-		line, err := readSMTPLine(r, maxSMTPCommandLineBytes)
-		if err != nil {
-			if errors.Is(err, errSMTPLineTooLong) {
-				write(500, "command line too long")
-				if s.cfg.MetricsEnabled {
-					smtpRejections.WithLabelValues("command_line_limit").Inc()
-				}
-			}
-			if err != io.EOF {
-				log.Printf("SMTP read: %v", err)
-			}
-			return
-		}
-		refreshDeadline()
-		line = strings.TrimRight(line, "\r\n")
-		parts := strings.SplitN(line, " ", 2)
-		command := strings.ToUpper(parts[0])
-		arg := ""
-		if len(parts) == 2 {
-			arg = parts[1]
-		}
-		switch command {
-		case "EHLO", "HELO":
-			write(250, "tmpmail")
-		case "NOOP":
-			write(250, "ok")
-		case "RSET":
-			sender, hasMail, recipients = "", false, nil
-			write(250, "reset")
-		case "QUIT":
-			write(221, "bye")
-			return
-		case "MAIL":
-			address, ok := smtpAddress(arg, "FROM:")
-			if !ok {
-				write(501, "invalid MAIL FROM")
-				continue
-			}
-			sender, hasMail, recipients = address, true, nil
-			write(250, "sender accepted")
-		case "RCPT":
-			if !hasMail {
-				write(503, "need MAIL FROM first")
-				continue
-			}
-			address, ok := smtpAddress(arg, "TO:")
-			if !ok || !s.accepts(address) {
-				write(550, "unknown recipient domain")
-				continue
-			}
-			if len(recipients) >= maxSMTPRecipients {
-				write(452, "too many recipients")
-				if s.cfg.MetricsEnabled {
-					smtpRejections.WithLabelValues("recipient_limit").Inc()
-				}
-				continue
-			}
-			if !containsRecipient(recipients, address) {
-				recipients = append(recipients, address)
-			}
-			write(250, "recipient accepted")
-		case "DATA":
-			if len(recipients) == 0 {
-				write(503, "need RCPT TO first")
-				continue
-			}
-			deliveryStarted := time.Now()
-			observeDelivery := func(err error) {
-				if s.cfg.MetricsEnabled {
-					smtpDeliveryDuration.WithLabelValues(metricResult(err)).Observe(time.Since(deliveryStarted).Seconds())
-				}
-			}
-			write(354, "end data with <CR><LF>.<CR><LF>")
-			raw, err := readDataWithLimit(r, s.cfg.MaxMessageBytes, refreshDeadline)
-			if err != nil {
-				if errors.Is(err, errSMTPLineTooLong) {
-					write(552, "message line too long")
-					if s.cfg.MetricsEnabled {
-						smtpRejections.WithLabelValues("data_line_limit").Inc()
-					}
-				} else {
-					write(552, "message too large or malformed")
-					if s.cfg.MetricsEnabled {
-						smtpRejections.WithLabelValues("message_limit_or_malformed").Inc()
-					}
-				}
-				if s.cfg.MetricsEnabled {
-					smtpMessages.WithLabelValues("rejected").Inc()
-				}
-				observeDelivery(err)
-				// The remaining DATA stream is untrusted and unbounded; close rather
-				// than draining it and allowing the client to retain this session.
-				return
-			}
-			stored := true
-			for _, recipient := range recipients {
-				message, err := s.store.Save(recipient, sender, raw)
-				if err != nil {
-					log.Printf("store message: %v", err)
-					write(451, "temporary storage failure")
-					if s.cfg.MetricsEnabled {
-						smtpMessages.WithLabelValues("failed").Inc()
-					}
-					stored = false
-					break
-				}
-				log.Printf("[smtp receive] id=%s recipient=%s sender=%s source_ip=%s bytes=%d", message.ID, message.Recipient, sender, sourceAddress(conn.RemoteAddr()), message.Size)
-				if s.cfg.MetricsEnabled {
-					smtpMessages.WithLabelValues("accepted").Inc()
-					smtpMessageBytes.Add(float64(message.Size))
-				}
-			}
-			if stored {
-				write(250, "message accepted")
-				observeDelivery(nil)
-			} else {
-				observeDelivery(errors.New("message storage failed"))
-			}
-			sender, hasMail, recipients = "", false, nil
-		default:
-			write(500, "command not recognized")
+func (s *smtpSession) Data(r io.Reader) error {
+	deliveryStarted := time.Now()
+	observeDelivery := func(err error) {
+		if s.server.cfg.MetricsEnabled {
+			smtpDeliveryDuration.WithLabelValues(metricResult(err)).Observe(time.Since(deliveryStarted).Seconds())
 		}
 	}
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		if s.server.cfg.MetricsEnabled {
+			smtpMessages.WithLabelValues("rejected").Inc()
+			smtpRejections.WithLabelValues("message_limit_or_malformed").Inc()
+		}
+		observeDelivery(err)
+		if errors.Is(err, smtp.ErrDataTooLarge) {
+			return smtp.ErrDataTooLarge
+		}
+		return &smtp.SMTPError{Code: 554, EnhancedCode: smtp.EnhancedCode{5, 0, 0}, Message: "message read failed"}
+	}
+	for _, recipient := range s.recipients {
+		message, err := s.server.store.Save(recipient, s.sender, raw)
+		if err != nil {
+			log.Printf("store message: %v", err)
+			if s.server.cfg.MetricsEnabled {
+				smtpMessages.WithLabelValues("failed").Inc()
+			}
+			observeDelivery(err)
+			return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "temporary storage failure"}
+		}
+		log.Printf("[smtp receive] id=%s recipient=%s sender=%s source_ip=%s bytes=%d", message.ID, message.Recipient, s.sender, s.sourceIP, message.Size)
+		if s.server.cfg.MetricsEnabled {
+			smtpMessages.WithLabelValues("accepted").Inc()
+			smtpMessageBytes.Add(float64(message.Size))
+		}
+	}
+	observeDelivery(nil)
+	return nil
 }
 
 func containsRecipient(recipients []string, address string) bool {
@@ -307,66 +260,100 @@ func (s *SMTPServer) accepts(address string) bool {
 	return at > 0 && strings.EqualFold(address[at+1:], s.cfg.MailDomain)
 }
 
-func smtpAddress(arg, prefix string) (string, bool) {
-	if !strings.HasPrefix(strings.ToUpper(arg), prefix) {
-		return "", false
-	}
-	value := strings.TrimSpace(arg[len(prefix):])
-	if !strings.HasPrefix(value, "<") || !strings.HasSuffix(value, ">") {
-		return "", false
-	}
-	value = strings.TrimSpace(value[1 : len(value)-1])
-	if value == "" && prefix == "FROM:" {
-		return "", true
-	}
-	parsed, err := mail.ParseAddress(value)
-	return value, err == nil && parsed.Address == value
+// tlsCertificateReloader retains the last valid certificate while a certificate
+// manager atomically replaces the files in a shared read-only volume.
+type tlsCertificateReloader struct {
+	certFile   string
+	keyFile    string
+	serverName string
+
+	mu                sync.Mutex
+	cert              *tls.Certificate
+	state             tlsCertificateState
+	failedReloadState tlsCertificateState
+	hasFailedReload   bool
 }
 
-func readData(r *bufio.Reader, max int64) ([]byte, error) {
-	return readDataWithLimit(r, max, nil)
+type tlsCertificateState struct {
+	cert fileState
+	key  fileState
 }
 
-func readDataWithLimit(r *bufio.Reader, max int64, onRead func()) ([]byte, error) {
-	var result []byte
-	for {
-		line, err := readSMTPLine(r, maxSMTPDataLineBytes)
-		if err != nil {
-			return nil, err
-		}
-		if onRead != nil {
-			onRead()
-		}
-		if line == ".\r\n" || line == ".\n" {
-			return result, nil
-		}
-		if strings.HasPrefix(line, "..") {
-			line = line[1:]
-		}
-		if int64(len(result)+len(line)) > max {
-			return nil, errMessageTooLarge
-		}
-		result = append(result, line...)
-	}
+type fileState struct {
+	modTime time.Time
+	size    int64
 }
 
-// readSMTPLine bounds allocation while consuming an SMTP line. A line that
-// exceeds the limit is fatal to the connection because the remainder is not a
-// valid command boundary.
-func readSMTPLine(r *bufio.Reader, max int) (string, error) {
-	line := make([]byte, 0, min(max, 4096))
-	for {
-		fragment, err := r.ReadSlice('\n')
-		if len(line)+len(fragment) > max {
-			return "", errSMTPLineTooLong
-		}
-		line = append(line, fragment...)
-		if err == nil {
-			return string(line), nil
-		}
-		if errors.Is(err, bufio.ErrBufferFull) {
-			continue
-		}
-		return "", err
+func newTLSCertificateReloader(certFile, keyFile, serverName string) (*tlsCertificateReloader, error) {
+	cert, state, err := loadTLSCertificate(certFile, keyFile, serverName)
+	if err != nil {
+		return nil, err
 	}
+	return &tlsCertificateReloader{certFile: certFile, keyFile: keyFile, serverName: serverName, cert: cert, state: state}, nil
+}
+
+func (r *tlsCertificateReloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	state, err := tlsCertificateFilesState(r.certFile, r.keyFile)
+	if err != nil {
+		return r.cert, nil
+	}
+	if state == r.state || (r.hasFailedReload && state == r.failedReloadState) {
+		return r.cert, nil
+	}
+	cert, loadedState, err := loadTLSCertificate(r.certFile, r.keyFile, r.serverName)
+	if err != nil {
+		r.failedReloadState, r.hasFailedReload = state, true
+		log.Printf("SMTP TLS certificate reload failed: %v", err)
+		return r.cert, nil
+	}
+	r.cert, r.state, r.hasFailedReload = cert, loadedState, false
+	log.Printf("SMTP TLS certificate reloaded")
+	return r.cert, nil
+}
+
+func loadTLSCertificate(certFile, keyFile, serverName string) (*tls.Certificate, tlsCertificateState, error) {
+	before, err := tlsCertificateFilesState(certFile, keyFile)
+	if err != nil {
+		return nil, tlsCertificateState{}, err
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, tlsCertificateState{}, err
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return nil, tlsCertificateState{}, err
+	}
+	if err := leaf.VerifyHostname(serverName); err != nil {
+		return nil, tlsCertificateState{}, fmt.Errorf("certificate does not cover %q: %w", serverName, err)
+	}
+	after, err := tlsCertificateFilesState(certFile, keyFile)
+	if err != nil {
+		return nil, tlsCertificateState{}, err
+	}
+	if before != after {
+		return nil, tlsCertificateState{}, errors.New("certificate files changed while loading")
+	}
+	return &cert, after, nil
+}
+
+func tlsCertificateFilesState(certFile, keyFile string) (tlsCertificateState, error) {
+	certInfo, err := os.Stat(certFile)
+	if err != nil {
+		return tlsCertificateState{}, err
+	}
+	keyInfo, err := os.Stat(keyFile)
+	if err != nil {
+		return tlsCertificateState{}, err
+	}
+	return tlsCertificateState{cert: fileState{modTime: certInfo.ModTime(), size: certInfo.Size()}, key: fileState{modTime: keyInfo.ModTime(), size: keyInfo.Size()}}, nil
+}
+
+func (s *SMTPServer) tlsConfig() *tls.Config {
+	if s.tlsCert == nil {
+		return nil
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: s.tlsCert.GetCertificate}
 }

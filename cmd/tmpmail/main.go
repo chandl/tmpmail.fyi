@@ -46,7 +46,10 @@ func main() {
 	defer stop()
 	go store.RunCleanup(ctx, time.Minute)
 
-	smtpServer := app.NewSMTPServer(cfg, store)
+	smtpServer, err := app.NewSMTPServer(cfg, store)
+	if err != nil {
+		log.Fatalf("configure SMTP server: %v", err)
+	}
 	httpServer := newHTTPServer(cfg.HTTPAddr, app.NewHTTPServer(cfg, store))
 
 	errCh := make(chan error, 3)

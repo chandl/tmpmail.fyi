@@ -44,6 +44,14 @@ func TestLoadConfigRejectsInvalidSMTPPerIPConnectionLimit(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRequiresSMTPTLSCertificateAndKeyTogether(t *testing.T) {
+	t.Setenv("MAIL_DOMAIN", "mail.test")
+	t.Setenv("SMTP_TLS_CERT_FILE", "/cert.pem")
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("expected unpaired SMTP TLS certificate setting to be rejected")
+	}
+}
+
 func TestLoadConfigHTTPProtectionDefaults(t *testing.T) {
 	t.Setenv("MAIL_DOMAIN", "mail.test")
 	cfg, err := LoadConfig()

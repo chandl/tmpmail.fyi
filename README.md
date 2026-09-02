@@ -49,6 +49,8 @@ Initial environment configuration:
 MAIL_DOMAIN=mail.example.com
 DATA_DIR=/data
 SMTP_ADDR=:25
+SMTP_TLS_CERT_FILE=/certs/fullchain.pem # Optional; set both TLS paths to enable SMTP STARTTLS.
+SMTP_TLS_KEY_FILE=/certs/privkey.pem
 HTTP_ADDR=:8080
 METRICS_ADDR=127.0.0.1:9090
 MESSAGE_TTL=1h
@@ -65,6 +67,10 @@ HTTP_LOG_HEADERS=User-Agent # Comma-separated request headers to include in HTTP
 `MAX_MESSAGE_BYTES` defaults to 2 MiB and `MAX_STORAGE_BYTES` defaults to 20 GiB. The global storage cap is enforced on every save: expired messages are removed first, then the oldest messages are evicted when necessary. A cleanup job also runs at startup and every minute.
 
 SMTP allows at most 100 concurrent sessions globally and 10 sessions per source IP by default. Set `SMTP_MAX_CONNECTIONS_PER_IP=0` only when a trusted SMTP proxy makes every connection appear to originate from the same address. Set the limits according to the host's measured capacity; rejected connections receive a transient `421 4.3.2` response when possible. Successful SMTP receives log the sender IP. HTTP applies an independent 512-request concurrency limit by default and responds with `503` plus `Retry-After` under pressure.
+
+Set both `SMTP_TLS_CERT_FILE` and `SMTP_TLS_KEY_FILE` to enable SMTP `STARTTLS`; leave both unset to retain plaintext SMTP. At startup, tmpmail verifies the certificate/key pair and requires the certificate to cover `MAIL_DOMAIN`. It advertises `STARTTLS` only when the pair is valid, requires a fresh `EHLO` after the upgrade, and supports TLS 1.2 or newer. It checks the files before each new TLS handshake, adopts a complete valid replacement, and keeps serving the last valid pair if renewal files are incomplete or invalid.
+
+For a Docker certificate-manager sidecar, mount a dedicated `smtp-certs` volume read-only at `/certs` in tmpmail. The manager should atomically stage `fullchain.pem` and `privkey.pem` into that volume with permissions readable by the `tmpmail` container user. Do not mount any API token or the certificate manager's full working directory into tmpmail.
 
 `MAIL_DOMAIN` is required. Only recipients at that domain are accepted; every local part is a valid disposable inbox.
 
@@ -166,7 +172,7 @@ The included Compose file serves the UI directly on port `8080` over HTTP. To us
 
 ## Container publishing
 
-GitHub Actions tests every pull request and builds a multi-architecture (`linux/amd64`, `linux/arm64`) container image. Pushes to `main` publish `ghcr.io/chandl/tmpmail.fyi:latest` and a branch/SHA tag; version tags such as `v0.1.0` also publish the matching version tag. The workflow is [`.github/workflows/container.yml`](.github/workflows/container.yml).
+GitHub Actions tests every pull request and builds multi-architecture (`linux/amd64`, `linux/arm64`) container images. Pushes to `main` publish both images with `latest`, branch, SHA, and automatically assigned `v1.0.<workflow-run>` tags, then create a GitHub Release using that version tag and generated release notes. Version tags such as `v0.1.0` also publish matching container-image tags. The workflow is [`.github/workflows/container.yml`](.github/workflows/container.yml).
 
 ## Status
 
