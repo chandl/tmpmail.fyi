@@ -215,6 +215,12 @@ func (s *SMTPServer) handle(conn net.Conn) {
 				write(503, "need RCPT TO first")
 				continue
 			}
+			deliveryStarted := time.Now()
+			observeDelivery := func(err error) {
+				if s.cfg.MetricsEnabled {
+					smtpDeliveryDuration.WithLabelValues(metricResult(err)).Observe(time.Since(deliveryStarted).Seconds())
+				}
+			}
 			write(354, "end data with <CR><LF>.<CR><LF>")
 			raw, err := readDataWithLimit(r, s.cfg.MaxMessageBytes, refreshDeadline)
 			if err != nil {
@@ -232,6 +238,7 @@ func (s *SMTPServer) handle(conn net.Conn) {
 				if s.cfg.MetricsEnabled {
 					smtpMessages.WithLabelValues("rejected").Inc()
 				}
+				observeDelivery(err)
 				// The remaining DATA stream is untrusted and unbounded; close rather
 				// than draining it and allowing the client to retain this session.
 				return
@@ -256,6 +263,9 @@ func (s *SMTPServer) handle(conn net.Conn) {
 			}
 			if stored {
 				write(250, "message accepted")
+				observeDelivery(nil)
+			} else {
+				observeDelivery(errors.New("message storage failed"))
 			}
 			sender, hasMail, recipients = "", false, nil
 		default:

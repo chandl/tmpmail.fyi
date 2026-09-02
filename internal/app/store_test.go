@@ -1,7 +1,10 @@
 package app
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -15,6 +18,43 @@ func testStore(t *testing.T, ttl time.Duration) *Store {
 	}
 	t.Cleanup(func() { store.Close() })
 	return store
+}
+
+func TestStorageOperationsEmitLoadTestMetrics(t *testing.T) {
+	cfg := Config{MailDomain: "mail.test", MessageTTL: time.Hour, MaxMessageBytes: 1024 * 1024, MaxStorageBytes: 1024 * 1024, MetricsEnabled: true}
+	dataDir := t.TempDir()
+	store, err := OpenStore(filepath.Join(dataDir, "mail.db"), filepath.Join(dataDir, "messages"), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	message, err := store.Save("build@mail.test", "sender@example.org", []byte("Subject: metrics\r\n\r\nbody"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.ListPage(message.Recipient, 25, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(message.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+
+	response := httptest.NewRecorder()
+	NewMetricsServer().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, metric := range []string{
+		"tmpmail_storage_save_duration_seconds",
+		"tmpmail_storage_write_lock_wait_seconds",
+		"tmpmail_storage_read_duration_seconds",
+		"tmpmail_cleanup_duration_seconds",
+	} {
+		if !strings.Contains(response.Body.String(), metric) {
+			t.Fatalf("expected %s in metrics output", metric)
+		}
+	}
 }
 
 func TestStoreSavesAndListsMessage(t *testing.T) {

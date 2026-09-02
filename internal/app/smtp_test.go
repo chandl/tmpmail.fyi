@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -95,6 +98,7 @@ func TestSMTPDeliversMessageToInbox(t *testing.T) {
 		MailDomain:      "mail.test",
 		MaxMessageBytes: 1024 * 1024,
 		MaxStorageBytes: 1024 * 1024,
+		MetricsEnabled:  true,
 	}, store)
 	serverConn, clientConn := net.Pipe()
 	defer clientConn.Close()
@@ -136,5 +140,10 @@ func TestSMTPDeliversMessageToInbox(t *testing.T) {
 	}
 	if len(messages) != 1 || messages[0].Subject != "integration works" {
 		t.Fatalf("unexpected inbox contents: %#v", messages)
+	}
+	metrics := httptest.NewRecorder()
+	NewMetricsServer().ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(metrics.Body.String(), "tmpmail_smtp_delivery_duration_seconds") {
+		t.Fatal("expected SMTP delivery duration metric")
 	}
 }

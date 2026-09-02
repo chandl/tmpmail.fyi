@@ -78,9 +78,13 @@ func OpenStore(dbPath, msgDir string, cfg Config) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Save(recipient, sender string, raw []byte) (message Message, err error) {
+	started := time.Now()
 	defer func() {
-		if err != nil && s.cfg.MetricsEnabled {
-			storageErrors.WithLabelValues("save").Inc()
+		if s.cfg.MetricsEnabled {
+			storageSaveDuration.WithLabelValues(metricResult(err)).Observe(time.Since(started).Seconds())
+			if err != nil {
+				storageErrors.WithLabelValues("save").Inc()
+			}
 		}
 	}()
 	if int64(len(raw)) > s.cfg.MaxMessageBytes {
@@ -89,7 +93,11 @@ func (s *Store) Save(recipient, sender string, raw []byte) (message Message, err
 	if int64(len(raw)) > s.cfg.MaxStorageBytes {
 		return Message{}, fmt.Errorf("message exceeds %d byte storage limit", s.cfg.MaxStorageBytes)
 	}
+	lockStarted := time.Now()
 	s.writeMu.Lock()
+	if s.cfg.MetricsEnabled {
+		storageWriteLockWait.Observe(time.Since(lockStarted).Seconds())
+	}
 	defer s.writeMu.Unlock()
 	now := time.Now().UTC()
 	message = Message{ID: newID(), Recipient: recipient, From: sender, Received: now, ExpiresAt: now.Add(s.cfg.MessageTTL), Size: int64(len(raw))}
@@ -135,13 +143,18 @@ func (s *Store) List(recipient string) ([]Message, error) {
 	return messages, err
 }
 
-func (s *Store) ListPage(recipient string, limit, offset int) ([]Message, bool, error) {
+func (s *Store) ListPage(recipient string, limit, offset int) (messages []Message, hasMore bool, err error) {
+	started := time.Now()
+	defer func() {
+		if s.cfg.MetricsEnabled {
+			storageReadDuration.WithLabelValues("list", metricResult(err)).Observe(time.Since(started).Seconds())
+		}
+	}()
 	rows, err := s.db.Query(`SELECT id, recipient, sender, subject, received_at, expires_at, size FROM messages WHERE recipient = ? AND expires_at > ? ORDER BY received_at DESC, id DESC LIMIT ? OFFSET ?`, recipient, time.Now().Unix(), limit+1, offset)
 	if err != nil {
 		return nil, false, err
 	}
 	defer rows.Close()
-	var messages []Message
 	for rows.Next() {
 		var m Message
 		var received, expires int64
@@ -154,18 +167,23 @@ func (s *Store) ListPage(recipient string, limit, offset int) ([]Message, bool, 
 	if err := rows.Err(); err != nil {
 		return nil, false, err
 	}
-	hasMore := len(messages) > limit
+	hasMore = len(messages) > limit
 	if hasMore {
 		messages = messages[:limit]
 	}
 	return messages, hasMore, nil
 }
 
-func (s *Store) Get(id string) (Message, error) {
-	var m Message
+func (s *Store) Get(id string) (m Message, err error) {
+	started := time.Now()
+	defer func() {
+		if s.cfg.MetricsEnabled {
+			storageReadDuration.WithLabelValues("get", metricResult(err)).Observe(time.Since(started).Seconds())
+		}
+	}()
 	var received, expires int64
 	var path string
-	err := s.db.QueryRow(`SELECT id, recipient, sender, subject, received_at, expires_at, size, path FROM messages WHERE id = ? AND expires_at > ?`, id, time.Now().Unix()).Scan(&m.ID, &m.Recipient, &m.From, &m.Subject, &received, &expires, &m.Size, &path)
+	err = s.db.QueryRow(`SELECT id, recipient, sender, subject, received_at, expires_at, size, path FROM messages WHERE id = ? AND expires_at > ?`, id, time.Now().Unix()).Scan(&m.ID, &m.Recipient, &m.From, &m.Subject, &received, &expires, &m.Size, &path)
 	if err != nil {
 		return Message{}, err
 	}
@@ -190,7 +208,13 @@ func (s *Store) RunCleanup(ctx context.Context, interval time.Duration) {
 	}
 }
 
-func (s *Store) Cleanup() error {
+func (s *Store) Cleanup() (err error) {
+	started := time.Now()
+	defer func() {
+		if s.cfg.MetricsEnabled {
+			cleanupDuration.WithLabelValues(metricResult(err)).Observe(time.Since(started).Seconds())
+		}
+	}()
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	stats, err := s.cleanupLocked(time.Now().Unix())
