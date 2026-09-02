@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +60,14 @@ func NewHTTPServer(cfg Config, store *Store) http.Handler {
 	mux.HandleFunc("GET /privacy", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = privacyTemplate.Execute(w, struct{ Year int }{Year: time.Now().Year()})
+	})
+	// A single path segment is an inbox shortcut (for example, /build-482).
+	// More-specific registered routes above take precedence over this pattern.
+	mux.HandleFunc("GET /{inbox}", func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		query.Set("inbox", r.PathValue("inbox"))
+		location := &url.URL{Path: "/", RawQuery: query.Encode()}
+		http.Redirect(w, r, location.String(), http.StatusFound)
 	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		renderInbox(w, store, cfg.MailDomain, strings.TrimSpace(r.URL.Query().Get("inbox")), pageOffset(r.URL.Query().Get("offset")))

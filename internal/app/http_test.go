@@ -126,6 +126,32 @@ func TestPrivacyPageExplainsMessageHandling(t *testing.T) {
 	}
 }
 
+func TestInboxShortcutRedirectsSinglePathSegment(t *testing.T) {
+	store := testStore(t, time.Hour)
+	response := httptest.NewRecorder()
+	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/asdf?offset=25", nil))
+
+	if response.Code != http.StatusFound {
+		t.Fatalf("expected inbox shortcut redirect, got status=%d", response.Code)
+	}
+	if location := response.Header().Get("Location"); location != "/?inbox=asdf&offset=25" {
+		t.Fatalf("expected inbox shortcut location, got %q", location)
+	}
+}
+
+func TestInboxShortcutDoesNotOverrideRegisteredPaths(t *testing.T) {
+	store := testStore(t, time.Hour)
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+
+	for _, path := range []string{"/privacy", "/ui.css", "/openapi.json"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code == http.StatusFound {
+			t.Fatalf("expected registered path %s not to redirect as an inbox", path)
+		}
+	}
+}
+
 func TestHTMLMessageUsesLightTheme(t *testing.T) {
 	store := testStore(t, time.Hour)
 	message, err := store.Save("build@mail.test", "sender@example.org", []byte("Content-Type: text/html\r\n\r\n<style>p{color:red}</style><p>Hello <a href=\"https://example.com\">world</a></p>"))
