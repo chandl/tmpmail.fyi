@@ -60,6 +60,8 @@ func TestSMTPDeliversMessageToInbox(t *testing.T) {
 	readSMTPResponse(t, reader, 250)
 	writeSMTPCommand(t, client, "MAIL FROM:<sender@example.org>")
 	readSMTPResponse(t, reader, 250)
+	writeSMTPCommand(t, client, "RCPT TO:<build@elsewhere.test>")
+	readSMTPResponse(t, reader, 550)
 	writeSMTPCommand(t, client, "RCPT TO:<build@mail.test>")
 	readSMTPResponse(t, reader, 250)
 	writeSMTPCommand(t, client, "DATA")
@@ -80,14 +82,20 @@ func TestSMTPDeliversMessageToInbox(t *testing.T) {
 	}
 	metrics := httptest.NewRecorder()
 	NewMetricsServer().ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	if !strings.Contains(metrics.Body.String(), "tmpmail_smtp_delivery_duration_seconds") {
-		t.Fatal("expected SMTP delivery duration metric")
+	for _, metric := range []string{
+		"tmpmail_smtp_delivery_duration_seconds",
+		"tmpmail_smtp_sessions_total{tls=\"false\"}",
+		"tmpmail_smtp_rejections_total{reason=\"recipient_domain\"}",
+	} {
+		if !strings.Contains(metrics.Body.String(), metric) {
+			t.Fatalf("expected %s in metrics", metric)
+		}
 	}
 }
 
 func TestSMTPLibraryEnforcesMessageSizeLimit(t *testing.T) {
 	store := testStore(t, time.Hour)
-	server := mustNewSMTPServer(t, Config{MailDomain: "mail.test", MaxMessageBytes: 8, MaxStorageBytes: 1024}, store)
+	server := mustNewSMTPServer(t, Config{MailDomain: "mail.test", MaxMessageBytes: 8, MaxStorageBytes: 1024, MetricsEnabled: true}, store)
 	client, reader := startSMTPServer(t, server)
 
 	readSMTPResponse(t, reader, 220)
@@ -103,11 +111,32 @@ func TestSMTPLibraryEnforcesMessageSizeLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	readSMTPResponse(t, reader, 552)
+	metrics := httptest.NewRecorder()
+	NewMetricsServer().ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(metrics.Body.String(), "tmpmail_smtp_rejections_total{reason=\"message_too_large\"}") {
+		t.Fatal("expected message-size rejection metric")
+	}
+}
+
+func TestSMTPLibraryEnforcesRecipientLimit(t *testing.T) {
+	store := testStore(t, time.Hour)
+	server := mustNewSMTPServer(t, Config{MailDomain: "mail.test", MaxMessageBytes: 1024, MaxStorageBytes: 1024, MaxSMTPRecipients: 1}, store)
+	client, reader := startSMTPServer(t, server)
+
+	readSMTPResponse(t, reader, 220)
+	writeSMTPCommand(t, client, "EHLO client")
+	readSMTPResponse(t, reader, 250)
+	writeSMTPCommand(t, client, "MAIL FROM:<sender@example.org>")
+	readSMTPResponse(t, reader, 250)
+	writeSMTPCommand(t, client, "RCPT TO:<first@mail.test>")
+	readSMTPResponse(t, reader, 250)
+	writeSMTPCommand(t, client, "RCPT TO:<second@mail.test>")
+	readSMTPResponse(t, reader, 452)
 }
 
 func TestSMTPSTARTTLS(t *testing.T) {
 	certFile, keyFile := writeTestCertificate(t, "mail.test", 1)
-	server := mustNewSMTPServer(t, Config{MailDomain: "mail.test", SMTPTLSCertFile: certFile, SMTPTLSKeyFile: keyFile, MaxMessageBytes: 1024}, nil)
+	server := mustNewSMTPServer(t, Config{MailDomain: "mail.test", SMTPTLSCertFile: certFile, SMTPTLSKeyFile: keyFile, MaxMessageBytes: 1024, MetricsEnabled: true}, nil)
 	client, reader := startSMTPServer(t, server)
 
 	readSMTPResponse(t, reader, 220)
@@ -135,11 +164,21 @@ func TestSMTPSTARTTLS(t *testing.T) {
 	readSMTPResponse(t, reader, 250)
 	writeSMTPCommand(t, tlsClient, "QUIT")
 	readSMTPResponse(t, reader, 221)
+	metrics := httptest.NewRecorder()
+	NewMetricsServer().ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, metric := range []string{
+		"tmpmail_smtp_sessions_total{tls=\"true\"}",
+		"tmpmail_smtp_tls_certificate_not_after_timestamp",
+	} {
+		if !strings.Contains(metrics.Body.String(), metric) {
+			t.Fatalf("expected %s in metrics", metric)
+		}
+	}
 }
 
 func TestTLSCertificateReloaderReloadsAtomically(t *testing.T) {
 	certFile, keyFile := writeTestCertificate(t, "mail.test", 1)
-	reloader, err := newTLSCertificateReloader(certFile, keyFile, "mail.test")
+	reloader, err := newTLSCertificateReloader(certFile, keyFile, "mail.test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

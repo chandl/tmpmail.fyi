@@ -22,6 +22,7 @@ type Config struct {
 	MaxStorageBytes         int64
 	MaxSMTPConnections      int
 	MaxSMTPConnectionsPerIP int
+	MaxSMTPRecipients       int
 	MaxHTTPRequests         int
 	MetricsEnabled          bool
 	HTTPAccessLogMode       string
@@ -49,6 +50,10 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("SMTP_MAX_CONNECTIONS_PER_IP: %w", err)
 	}
+	maxSMTPRecipients, err := positiveInt(env("SMTP_MAX_RECIPIENTS", strconv.Itoa(defaultMaxSMTPRecipients)))
+	if err != nil {
+		return Config{}, fmt.Errorf("SMTP_MAX_RECIPIENTS: %w", err)
+	}
 	tlsCertFile := strings.TrimSpace(os.Getenv("SMTP_TLS_CERT_FILE"))
 	tlsKeyFile := strings.TrimSpace(os.Getenv("SMTP_TLS_KEY_FILE"))
 	if (tlsCertFile == "") != (tlsKeyFile == "") {
@@ -70,7 +75,7 @@ func LoadConfig() (Config, error) {
 	if accessLogMode != "all" && accessLogMode != "errors" && accessLogMode != "off" {
 		return Config{}, fmt.Errorf("HTTP_ACCESS_LOG_MODE must be all, errors, or off")
 	}
-	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), SMTPTLSCertFile: tlsCertFile, SMTPTLSKeyFile: tlsKeyFile, HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxSMTPConnectionsPerIP: maxSMTPConnectionsPerIP, MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders}, nil
+	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), SMTPTLSCertFile: tlsCertFile, SMTPTLSKeyFile: tlsKeyFile, HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxSMTPConnectionsPerIP: maxSMTPConnectionsPerIP, MaxSMTPRecipients: int(maxSMTPRecipients), MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders}, nil
 }
 
 func parseHTTPLogHeaders(value string) ([]string, error) {

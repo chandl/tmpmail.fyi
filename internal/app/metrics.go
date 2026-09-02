@@ -21,12 +21,18 @@ var (
 	smtpConnectionsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tmpmail", Name: "smtp_connections_total", Help: "SMTP connection admission attempts by result.",
 	}, []string{"result"})
+	smtpSessionsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "tmpmail", Name: "smtp_sessions_total", Help: "SMTP sessions that completed HELO or EHLO by TLS state.",
+	}, []string{"tls"})
 	smtpSessionDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tmpmail", Name: "smtp_session_duration_seconds", Help: "Time spent handling admitted SMTP sessions.",
 	}, []string{"result"})
 	smtpRejections = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "tmpmail", Name: "smtp_rejections_total", Help: "SMTP rejections caused by protective limits.",
+		Namespace: "tmpmail", Name: "smtp_rejections_total", Help: "SMTP admission and delivery rejections by reason.",
 	}, []string{"reason"})
+	smtpTLSCertificateNotAfter = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "tmpmail", Name: "smtp_tls_certificate_not_after_timestamp", Help: "Unix timestamp at which the active SMTP TLS certificate expires; zero when SMTP TLS is disabled.",
+	})
 	smtpDeliveryDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tmpmail", Name: "smtp_delivery_duration_seconds", Help: "Time to read and persist an SMTP DATA transaction.",
 	}, []string{"result"})
@@ -90,7 +96,7 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(smtpMessages, smtpMessageBytes, smtpConnections, smtpConnectionsTotal, smtpSessionDuration, smtpRejections, smtpDeliveryDuration, httpRequests, httpDuration, httpResponseBytes, httpRequestsInFlight, httpOverloadRejections, httpCanceled, cleanupMessages, cleanupBytes, storageBytes, storageMessages, storageErrors, storageSaveDuration, storageWriteLockWait, storageReadDuration, storageSaveStageDuration, storageDBOpenConnections, storageDBInUseConnections, cleanupErrors, cleanupDuration)
+	prometheus.MustRegister(smtpMessages, smtpMessageBytes, smtpConnections, smtpConnectionsTotal, smtpSessionsTotal, smtpSessionDuration, smtpRejections, smtpTLSCertificateNotAfter, smtpDeliveryDuration, httpRequests, httpDuration, httpResponseBytes, httpRequestsInFlight, httpOverloadRejections, httpCanceled, cleanupMessages, cleanupBytes, storageBytes, storageMessages, storageErrors, storageSaveDuration, storageWriteLockWait, storageReadDuration, storageSaveStageDuration, storageDBOpenConnections, storageDBInUseConnections, cleanupErrors, cleanupDuration)
 }
 
 func metricsHandler() http.Handler { return promhttp.Handler() }

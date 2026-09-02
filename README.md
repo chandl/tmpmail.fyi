@@ -58,6 +58,7 @@ MAX_MESSAGE_BYTES=2097152
 MAX_STORAGE_BYTES=21474836480
 SMTP_MAX_CONNECTIONS=100 # Global concurrent SMTP-session admission limit.
 SMTP_MAX_CONNECTIONS_PER_IP=10 # Per-source SMTP-session cap; set 0 only behind a trusted SMTP proxy.
+SMTP_MAX_RECIPIENTS=5 # Per-message recipient cap.
 HTTP_MAX_CONCURRENT_REQUESTS=512 # Set to 0 only to disable HTTP overload shedding.
 METRICS_ENABLED=false # Start the separate metrics listener when true.
 HTTP_ACCESS_LOG_MODE=errors # all, errors, or off; errors avoids hot-path log pressure.
@@ -66,7 +67,7 @@ HTTP_LOG_HEADERS=User-Agent # Comma-separated request headers to include in HTTP
 
 `MAX_MESSAGE_BYTES` defaults to 2 MiB and `MAX_STORAGE_BYTES` defaults to 20 GiB. The global storage cap is enforced on every save: expired messages are removed first, then the oldest messages are evicted when necessary. A cleanup job also runs at startup and every minute.
 
-SMTP allows at most 100 concurrent sessions globally and 10 sessions per source IP by default. Set `SMTP_MAX_CONNECTIONS_PER_IP=0` only when a trusted SMTP proxy makes every connection appear to originate from the same address. Set the limits according to the host's measured capacity; rejected connections receive a transient `421 4.3.2` response when possible. Successful SMTP receives log the sender IP. HTTP applies an independent 512-request concurrency limit by default and responds with `503` plus `Retry-After` under pressure.
+SMTP allows at most 100 concurrent sessions globally, 10 sessions per source IP, and 5 recipients per message by default. Set `SMTP_MAX_CONNECTIONS_PER_IP=0` only when a trusted SMTP proxy makes every connection appear to originate from the same address. Raise `SMTP_MAX_RECIPIENTS` only for a known workload: each accepted recipient creates a separate stored message. Set the limits according to the host's measured capacity; rejected connections receive a transient `421 4.3.2` response when possible. Successful SMTP receives log the sender IP. HTTP applies an independent 512-request concurrency limit by default and responds with `503` plus `Retry-After` under pressure.
 
 Set both `SMTP_TLS_CERT_FILE` and `SMTP_TLS_KEY_FILE` to enable SMTP `STARTTLS`; leave both unset to retain plaintext SMTP. At startup, tmpmail verifies the certificate/key pair and requires the certificate to cover `MAIL_DOMAIN`. It advertises `STARTTLS` only when the pair is valid, requires a fresh `EHLO` after the upgrade, and supports TLS 1.2 or newer. It checks the files before each new TLS handshake, adopts a complete valid replacement, and keeps serving the last valid pair if renewal files are incomplete or invalid.
 
@@ -87,7 +88,8 @@ Messages are stored unchanged as raw `.eml` files. For the reader, tmpmail parse
 The application uses Go 1.27.0 and a C compiler for local development builds, or Docker for a runtime that does not have either installed.
 
 ```sh
-# Edit MAIL_DOMAIN in compose.yaml.
+# Create your local runtime configuration, then set MAIL_DOMAIN in .env.
+cp .env.example .env
 docker compose up --build
 ```
 
@@ -112,7 +114,7 @@ GET /openapi.json
 
 Set `METRICS_ENABLED=true` to start a dedicated Prometheus listener at `METRICS_ADDR`, which defaults to `127.0.0.1:9090`. It serves only `GET /metrics`; `GET /metrics` on the public UI/API listener returns `404`.
 
-The Compose file changes `METRICS_ADDR` to `:9090`, but does not publish it to the host, so a Prometheus container on the private Compose network can scrape `tmpmail:9090`. Do not add a public `9090` port mapping. Metrics cover SMTP admission/outcomes, accepted bytes, active sessions, and limit rejections; normalized HTTP request counts, outcome-class latency, response bytes, in-flight requests, cancellations, and overload rejections; cleanup activity; current stored message/byte usage; SQLite pool state; and storage or cleanup errors. Storage metrics distinguish persistence stages from writer-lock wait. Alert on sustained SMTP or HTTP admission rejections, storage lock wait, and storage errors.
+The Compose file changes `METRICS_ADDR` to `:9090`, but does not publish it to the host, so a Prometheus container on the private Compose network can scrape `tmpmail:9090`. Do not add a public `9090` port mapping. Metrics cover SMTP admission/outcomes, accepted bytes, active sessions, protocol sessions labeled by TLS state, delivery rejections, and `tmpmail_smtp_tls_certificate_not_after_timestamp`; normalized HTTP request counts, outcome-class latency, response bytes, in-flight requests, cancellations, and overload rejections; cleanup activity; current stored message/byte usage; SQLite pool state; and storage or cleanup errors. Storage metrics distinguish persistence stages from writer-lock wait. Alert on sustained SMTP or HTTP admission rejections, certificate expiry, storage lock wait, and storage errors.
 
 tmpmail logs successful SMTP receives and cleanup work. HTTP request logging defaults to errors only, avoiding a synchronous log write for every successful request during a traffic burst; set `HTTP_ACCESS_LOG_MODE=all` for temporary diagnostics or `off` when an edge proxy supplies access logs. HTTP entries include `method`, `path`, `status`, and `duration_ms`, plus the comma-separated request-header allowlist in `HTTP_LOG_HEADERS`. Do not use forwarding headers for SMTP admission: source-IP limits are deliberately not implemented.
 
@@ -153,11 +155,11 @@ tmpmail
   image: ghcr.io/chandl/tmpmail.fyi:latest
   ports: 25:2525, 8080:8080
   volumes: tmpmail-data:/data
-  environment: MAIL_DOMAIN, addresses, TTL, limits, and optional metrics settings
+  env_file: .env
   restart: unless-stopped
 ```
 
-The named volume holds both `mail.db` and raw `.eml` message files, so container recreation does not remove mail. Configuration is kept directly in `compose.yaml` for this minimal deployment.
+The named volume holds both `mail.db` and raw `.eml` message files, so container recreation does not remove mail. Copy [`.env.example`](.env.example) to `.env` and edit it for the deployment; `.env` is ignored by Git. The Compose file accepts a missing `.env` for inspection, but tmpmail requires `MAIL_DOMAIN`, so create it before starting the service.
 
 ### HTTPS (optional)
 

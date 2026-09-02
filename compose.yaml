@@ -2,30 +2,9 @@ services:
   tmpmail:
     image: ghcr.io/chandl/tmpmail.fyi:latest
     build: .
-    environment:
-      MAIL_DOMAIN: mail.example.com # Change to your mail domain.
-      DATA_DIR: /data
-      SMTP_ADDR: :2525
-      # Leave both empty for plaintext SMTP. Set both to enable STARTTLS from
-      # certificates staged in the read-only smtp-certs volume.
-      SMTP_TLS_CERT_FILE: ${SMTP_TLS_CERT_FILE:-}
-      SMTP_TLS_KEY_FILE: ${SMTP_TLS_KEY_FILE:-}
-      HTTP_ADDR: :8080
-      # Metrics are not published to the host. Keep this private to the Compose network.
-      METRICS_ADDR: :9090
-      MESSAGE_TTL: 1h
-      MAX_MESSAGE_BYTES: 2097152
-      MAX_STORAGE_BYTES: 21474836480
-      # Protect legitimate senders from a single client holding every SMTP session.
-      SMTP_MAX_CONNECTIONS: 100
-      SMTP_MAX_CONNECTIONS_PER_IP: 10 # Set to 0 only behind a trusted SMTP proxy.
-      # Return fast 503 responses rather than exhausting the process under HTTP load.
-      HTTP_MAX_CONCURRENT_REQUESTS: 512
-      METRICS_ENABLED: "false"
-      # Use Prometheus for successful request volume; log all, errors, or off.
-      HTTP_ACCESS_LOG_MODE: errors
-      # Comma-separated request headers to include in HTTP logs.
-      HTTP_LOG_HEADERS: User-Agent
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "25:2525"
       - "8080:8080"

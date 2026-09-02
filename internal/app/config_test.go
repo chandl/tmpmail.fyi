@@ -9,7 +9,7 @@ func TestLoadConfigSMTPConnectionLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.MaxSMTPConnections != defaultMaxSMTPConnections || cfg.MaxSMTPConnectionsPerIP != 10 {
+	if cfg.MaxSMTPConnections != defaultMaxSMTPConnections || cfg.MaxSMTPConnectionsPerIP != 10 || cfg.MaxSMTPRecipients != defaultMaxSMTPRecipients {
 		t.Fatalf("unexpected SMTP defaults: %#v", cfg)
 	}
 
@@ -23,8 +23,21 @@ func TestLoadConfigSMTPConnectionLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.MaxSMTPConnections != 250 || cfg.MaxSMTPConnectionsPerIP != 25 {
+	t.Setenv("SMTP_MAX_RECIPIENTS", "5")
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxSMTPConnections != 250 || cfg.MaxSMTPConnectionsPerIP != 25 || cfg.MaxSMTPRecipients != 5 {
 		t.Fatalf("unexpected configured limits: %#v", cfg)
+	}
+}
+
+func TestLoadConfigRejectsInvalidSMTPRecipientLimit(t *testing.T) {
+	t.Setenv("MAIL_DOMAIN", "mail.test")
+	t.Setenv("SMTP_MAX_RECIPIENTS", "0")
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("expected non-positive SMTP_MAX_RECIPIENTS to be rejected")
 	}
 }
 

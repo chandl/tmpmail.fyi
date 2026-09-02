@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,9 +20,9 @@ import (
 
 const (
 	defaultMaxSMTPConnections   = 100
+	defaultMaxSMTPRecipients    = 5
 	maxConcurrentSMTPRejections = 16
 	maxSMTPCommandLineBytes     = 8 << 10
-	maxSMTPRecipients           = 100
 	smtpSessionTimeout          = 2 * time.Minute
 )
 
@@ -41,19 +42,29 @@ func NewSMTPServer(cfg Config, store *Store) (*SMTPServer, error) {
 	if limit == 0 {
 		limit = defaultMaxSMTPConnections
 	}
+	maxRecipients := cfg.MaxSMTPRecipients
+	if maxRecipients == 0 {
+		maxRecipients = defaultMaxSMTPRecipients
+	}
 	server := &SMTPServer{cfg: cfg, store: store, sessions: make(chan struct{}, limit), rejects: make(chan struct{}, maxConcurrentSMTPRejections), sources: make(map[string]int)}
 	if cfg.SMTPTLSCertFile != "" {
-		reloader, err := newTLSCertificateReloader(cfg.SMTPTLSCertFile, cfg.SMTPTLSKeyFile, cfg.MailDomain)
+		reloader, err := newTLSCertificateReloader(cfg.SMTPTLSCertFile, cfg.SMTPTLSKeyFile, cfg.MailDomain, setSMTPTLSCertificateExpiry)
 		if err != nil {
 			return nil, fmt.Errorf("load SMTP TLS certificate: %w", err)
 		}
 		server.tlsCert = reloader
+	} else {
+		smtpTLSCertificateNotAfter.Set(0)
 	}
 	protocolServer := smtp.NewServer(smtp.BackendFunc(func(conn *smtp.Conn) (smtp.Session, error) {
+		if server.cfg.MetricsEnabled {
+			_, tlsActive := conn.TLSConnectionState()
+			smtpSessionsTotal.WithLabelValues(strconv.FormatBool(tlsActive)).Inc()
+		}
 		return &smtpSession{server: server, sourceIP: sourceAddress(conn.Conn().RemoteAddr())}, nil
 	}))
 	protocolServer.Domain = cfg.MailDomain
-	protocolServer.MaxRecipients = maxSMTPRecipients
+	protocolServer.MaxRecipients = maxRecipients
 	protocolServer.MaxMessageBytes = cfg.MaxMessageBytes
 	protocolServer.MaxLineLength = maxSMTPCommandLineBytes
 	protocolServer.ReadTimeout = smtpSessionTimeout
@@ -199,6 +210,9 @@ func (s *smtpSession) Mail(from string, _ *smtp.MailOptions) error {
 
 func (s *smtpSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 	if !s.server.accepts(to) {
+		if s.server.cfg.MetricsEnabled {
+			smtpRejections.WithLabelValues("recipient_domain").Inc()
+		}
 		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "unknown recipient domain"}
 	}
 	if !containsRecipient(s.recipients, to) {
@@ -218,7 +232,11 @@ func (s *smtpSession) Data(r io.Reader) error {
 	if err != nil {
 		if s.server.cfg.MetricsEnabled {
 			smtpMessages.WithLabelValues("rejected").Inc()
-			smtpRejections.WithLabelValues("message_limit_or_malformed").Inc()
+			if errors.Is(err, smtp.ErrDataTooLarge) {
+				smtpRejections.WithLabelValues("message_too_large").Inc()
+			} else {
+				smtpRejections.WithLabelValues("message_read_failed").Inc()
+			}
 		}
 		observeDelivery(err)
 		if errors.Is(err, smtp.ErrDataTooLarge) {
@@ -266,6 +284,7 @@ type tlsCertificateReloader struct {
 	certFile   string
 	keyFile    string
 	serverName string
+	onReload   func(*tls.Certificate)
 
 	mu                sync.Mutex
 	cert              *tls.Certificate
@@ -284,12 +303,16 @@ type fileState struct {
 	size    int64
 }
 
-func newTLSCertificateReloader(certFile, keyFile, serverName string) (*tlsCertificateReloader, error) {
+func newTLSCertificateReloader(certFile, keyFile, serverName string, onReload func(*tls.Certificate)) (*tlsCertificateReloader, error) {
 	cert, state, err := loadTLSCertificate(certFile, keyFile, serverName)
 	if err != nil {
 		return nil, err
 	}
-	return &tlsCertificateReloader{certFile: certFile, keyFile: keyFile, serverName: serverName, cert: cert, state: state}, nil
+	reloader := &tlsCertificateReloader{certFile: certFile, keyFile: keyFile, serverName: serverName, onReload: onReload, cert: cert, state: state}
+	if reloader.onReload != nil {
+		reloader.onReload(cert)
+	}
+	return reloader, nil
 }
 
 func (r *tlsCertificateReloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -309,8 +332,19 @@ func (r *tlsCertificateReloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Cert
 		return r.cert, nil
 	}
 	r.cert, r.state, r.hasFailedReload = cert, loadedState, false
+	if r.onReload != nil {
+		r.onReload(cert)
+	}
 	log.Printf("SMTP TLS certificate reloaded")
 	return r.cert, nil
+}
+
+func setSMTPTLSCertificateExpiry(cert *tls.Certificate) {
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return
+	}
+	smtpTLSCertificateNotAfter.Set(float64(leaf.NotAfter.Unix()))
 }
 
 func loadTLSCertificate(certFile, keyFile, serverName string) (*tls.Certificate, tlsCertificateState, error) {
