@@ -71,7 +71,7 @@ Open the UI with an inbox local part, for example `/?inbox=build-482`. The UI ap
 
 The UI provides an inbox list, pagination, refresh, random-inbox, and copy-address controls. It displays browser-local timestamps and clearly separates message headers from the body.
 
-Messages are stored unchanged as raw `.eml` files. For the reader, tmpmail parses MIME multipart messages, prefers `text/plain`, and offers a **View HTML** option when an HTML part is present. HTML is sanitized and rendered in a sandboxed iframe; remote images are blocked.
+Messages are stored unchanged as raw `.eml` files. For the reader, tmpmail parses MIME multipart messages and displays the HTML part by default when one is present, with a **View plain text** option. HTML is sanitized and rendered in a sandboxed iframe; links open in a new tab, while scripts, forms, and remote images remain blocked.
 
 ## Local development
 

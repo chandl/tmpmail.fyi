@@ -83,6 +83,9 @@ func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	if !strings.Contains(page, "build@mail.test") {
 		t.Fatalf("expected resolved inbox address, got %q", page)
 	}
+	if !strings.Contains(uiCSS, `.shell.inbox-shell{width:min(1180px,calc(100% - 32px))}`) || !strings.Contains(uiScript, "classList.add('inbox-shell')") {
+		t.Fatal("expected populated inboxes to use the wider desktop layout")
+	}
 	if !strings.Contains(page, "<title>tmpmail - build@mail.test</title>") {
 		t.Fatalf("expected inbox-specific page title, got %q", page)
 	}
@@ -125,7 +128,7 @@ func TestPrivacyPageExplainsMessageHandling(t *testing.T) {
 
 func TestHTMLMessageUsesLightTheme(t *testing.T) {
 	store := testStore(t, time.Hour)
-	message, err := store.Save("build@mail.test", "sender@example.org", []byte("Content-Type: text/html\r\n\r\n<p>Hello</p>"))
+	message, err := store.Save("build@mail.test", "sender@example.org", []byte("Content-Type: text/html\r\n\r\n<style>p{color:red}</style><p>Hello <a href=\"https://example.com\">world</a></p>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,6 +137,35 @@ func TestHTMLMessageUsesLightTheme(t *testing.T) {
 
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `color-scheme" content="light"`) || !strings.Contains(response.Body.String(), "background:#fff;color:#1e293b") {
 		t.Fatalf("expected light HTML message rendering, got status=%d body=%q", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `<style>p{color:red}</style>`) || !strings.Contains(response.Body.String(), `target="_blank" rel="noopener noreferrer"`) {
+		t.Fatalf("expected formatted HTML and clickable external links, got %q", response.Body.String())
+	}
+	policy := response.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "img-src 'none'") || !strings.Contains(policy, "form-action 'none'") {
+		t.Fatalf("expected isolated HTML message policy, got %q", policy)
+	}
+}
+
+func TestInboxMarksHTMLMessagesForDefaultRendering(t *testing.T) {
+	store := testStore(t, time.Hour)
+	message, err := store.Save("build@mail.test", "sender@example.org", []byte("Content-Type: multipart/alternative; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nPlain body\r\n--x\r\nContent-Type: text/html\r\n\r\n<p>HTML body</p>\r\n--x--\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	page := httptest.NewRecorder()
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/?inbox=build", nil))
+	if !strings.Contains(page.Body.String(), `data-message-id="`+message.ID+`" data-has-html="true"`) || !strings.Contains(page.Body.String(), `class="plain-body"`) {
+		t.Fatalf("expected server-rendered HTML availability, got %q", page.Body.String())
+	}
+
+	script := httptest.NewRecorder()
+	handler.ServeHTTP(script, httptest.NewRequest(http.MethodGet, "/ui.js", nil))
+	contents := script.Body.String()
+	if !strings.Contains(contents, "message.dataset.hasHtml === 'true'") || !strings.Contains(contents, "View plain text") || !strings.Contains(contents, "allow-popups allow-popups-to-escape-sandbox") {
+		t.Fatalf("expected HTML-first reader with safe external navigation, got %q", contents)
 	}
 }
 

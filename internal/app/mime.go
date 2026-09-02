@@ -32,7 +32,7 @@ func parseEmail(raw string) parsedEmail {
 		result.Text = plain
 	}
 	result.HTML = sanitizeHTML(htmlBody)
-	if result.Text == "" && result.HTML != "" {
+	if plain == "" && result.HTML != "" {
 		result.Text = htmlText(result.HTML)
 	}
 	return result
@@ -100,6 +100,13 @@ func sanitizeHTML(source string) string {
 	}
 	removeUnsafeHTML(doc)
 	var output bytes.Buffer
+	if head := findElement(doc, "head"); head != nil {
+		for child := head.FirstChild; child != nil; child = child.NextSibling {
+			if child.Type == html.ElementNode && child.Data == "style" {
+				_ = html.Render(&output, child)
+			}
+		}
+	}
 	if body := findBody(doc); body != nil {
 		for child := body.FirstChild; child != nil; child = child.NextSibling {
 			_ = html.Render(&output, child)
@@ -111,18 +118,21 @@ func sanitizeHTML(source string) string {
 func removeUnsafeHTML(node *html.Node) {
 	for child := node.FirstChild; child != nil; {
 		next := child.NextSibling
-		if child.Type == html.ElementNode && map[string]bool{"script": true, "style": true, "iframe": true, "object": true, "embed": true, "link": true, "form": true, "meta": true, "base": true}[child.Data] {
+		if child.Type == html.ElementNode && map[string]bool{"script": true, "iframe": true, "object": true, "embed": true, "link": true, "form": true, "meta": true, "base": true}[child.Data] {
 			node.RemoveChild(child)
 		} else {
 			if child.Type == html.ElementNode {
 				attrs := child.Attr[:0]
 				for _, attr := range child.Attr {
 					name := strings.ToLower(attr.Key)
-					if !strings.HasPrefix(name, "on") && name != "style" && name != "src" && name != "srcset" {
+					if !strings.HasPrefix(name, "on") && name != "src" && name != "srcset" && name != "target" && name != "rel" && (name != "href" || child.Data == "a" && safeLink(attr.Val)) {
 						attrs = append(attrs, attr)
 					}
 				}
 				child.Attr = attrs
+				if child.Data == "a" && hasLink(child) {
+					child.Attr = append(child.Attr, html.Attribute{Key: "target", Val: "_blank"}, html.Attribute{Key: "rel", Val: "noopener noreferrer"})
+				}
 			}
 			removeUnsafeHTML(child)
 		}
@@ -130,16 +140,35 @@ func removeUnsafeHTML(node *html.Node) {
 	}
 }
 
-func findBody(node *html.Node) *html.Node {
-	if node.Type == html.ElementNode && node.Data == "body" {
+func safeLink(value string) bool {
+	value = strings.TrimSpace(value)
+	lower := strings.ToLower(value)
+	return strings.HasPrefix(value, "#") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "mailto:")
+}
+
+func hasLink(node *html.Node) bool {
+	for _, attr := range node.Attr {
+		if strings.EqualFold(attr.Key, "href") && !strings.HasPrefix(strings.TrimSpace(attr.Val), "#") {
+			return true
+		}
+	}
+	return false
+}
+
+func findElement(node *html.Node, name string) *html.Node {
+	if node.Type == html.ElementNode && node.Data == name {
 		return node
 	}
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
-		if body := findBody(child); body != nil {
-			return body
+		if element := findElement(child, name); element != nil {
+			return element
 		}
 	}
 	return nil
+}
+
+func findBody(node *html.Node) *html.Node {
+	return findElement(node, "body")
 }
 
 func htmlText(source string) string {
@@ -150,6 +179,9 @@ func htmlText(source string) string {
 	var text strings.Builder
 	var walk func(*html.Node)
 	walk = func(node *html.Node) {
+		if node.Type == html.ElementNode && node.Data == "style" {
+			return
+		}
 		if node.Type == html.TextNode {
 			text.WriteString(node.Data)
 			text.WriteByte(' ')

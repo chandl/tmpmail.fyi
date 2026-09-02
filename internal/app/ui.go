@@ -1,7 +1,8 @@
 package app
 
 const uiCSS = `
-.random{background:#e2e8f0!important;color:#1e293b!important}.random:hover{background:#cbd5e1!important}.html-toggle{margin-top:14px;background:#e2e8f0!important;color:#1e293b!important;padding:6px 10px!important;font-size:12px!important}.html-frame{width:100%;min-height:360px;margin-top:12px;border:1px solid #cbd5e1;border-radius:8px;background:#fff}.mailbox{display:grid;grid-template-columns:270px minmax(0,1fr);min-height:470px;margin:18px -22px -22px;border-top:1px solid #cbd5e1}.message-list{overflow:auto;padding:9px;border-right:1px solid #cbd5e1;background:#f8fafc}.message-item{display:block;width:100%;border:0;border-radius:9px;background:transparent;color:#334155;padding:11px;text-align:left;cursor:pointer}.message-item:hover{background:#e2e8f0}.message-item.active{background:#dbeafe;color:#172554}.message-item-subject{display:block;overflow:hidden;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.message-item-meta{display:block;margin-top:3px;color:#64748b;font-size:12px}.message-item-preview{display:-webkit-box;overflow:hidden;margin-top:5px;color:#64748b;font-size:12px;line-height:1.35;-webkit-box-orient:vertical;-webkit-line-clamp:2}.message-reader{min-width:0;background:#fff}.mailbox .message{display:none;border:0;margin:0;padding:22px}.mailbox .message.active{display:block}.mailbox .subject{font-size:20px;letter-spacing:-.02em}.mailbox .details{margin-top:8px;padding-bottom:16px;border-bottom:1px solid #cbd5e1}.mailbox .section-label{margin-top:20px}.mailbox .message pre{min-height:150px;background:#f8fafc}.mailbox details pre{min-height:auto}.pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:14px 0 0}.pagination a{border:1px solid #cbd5e1;border-radius:7px;color:#334155;padding:5px 9px;text-decoration:none;font-size:12px}.pagination a:hover{background:#f1f5f9}@media(max-width:700px){.mailbox{display:block;margin:18px -16px -16px}.message-list{max-height:220px;border-right:0;border-bottom:1px solid #cbd5e1}.mailbox .message{padding:16px}.mailbox .subject{font-size:18px}}
+.shell.inbox-shell{width:min(1180px,calc(100% - 32px))}
+.random{background:#e2e8f0!important;color:#1e293b!important}.random:hover{background:#cbd5e1!important}.message-body-toolbar{display:flex;justify-content:flex-end;margin-top:10px}.html-toggle{background:#e2e8f0!important;color:#1e293b!important;padding:6px 10px!important;font-size:12px!important}.html-frame{width:100%;min-height:480px;margin-top:10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff}.html-frame[hidden],.plain-body[hidden]{display:none}.mailbox{display:grid;grid-template-columns:270px minmax(0,1fr);min-height:470px;margin:18px -22px -22px;border-top:1px solid #cbd5e1}.message-list{overflow:auto;padding:9px;border-right:1px solid #cbd5e1;background:#f8fafc}.message-item{display:block;width:100%;border:0;border-radius:9px;background:transparent;color:#334155;padding:11px;text-align:left;cursor:pointer}.message-item:hover{background:#e2e8f0}.message-item.active{background:#dbeafe;color:#172554}.message-item-subject{display:block;overflow:hidden;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.message-item-meta{display:block;margin-top:3px;color:#64748b;font-size:12px}.message-item-preview{display:-webkit-box;overflow:hidden;margin-top:5px;color:#64748b;font-size:12px;line-height:1.35;-webkit-box-orient:vertical;-webkit-line-clamp:2}.message-reader{min-width:0;background:#fff}.mailbox .message{display:none;border:0;margin:0;padding:22px}.mailbox .message.active{display:block}.mailbox .subject{font-size:20px;letter-spacing:-.02em}.mailbox .details{margin-top:8px;padding-bottom:16px;border-bottom:1px solid #cbd5e1}.mailbox .section-label{margin-top:20px}.mailbox .message pre{min-height:150px;background:#f8fafc}.mailbox details pre{min-height:auto}.pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:14px 0 0}.pagination a{border:1px solid #cbd5e1;border-radius:7px;color:#334155;padding:5px 9px;text-decoration:none;font-size:12px}.pagination a:hover{background:#f1f5f9}@media(max-width:700px){.mailbox{display:block;margin:18px -16px -16px}.message-list{max-height:220px;border-right:0;border-bottom:1px solid #cbd5e1}.mailbox .message{padding:16px}.mailbox .subject{font-size:18px}.html-frame{min-height:400px}}
 `
 
 const uiScript = `
@@ -10,6 +11,7 @@ const uiScript = `
   const messages = [...document.querySelectorAll('.panel > .message')];
   const form = document.getElementById('inbox-form');
   const input = document.getElementById('inbox');
+  if (panel?.querySelector('.meta')) document.querySelector('.shell')?.classList.add('inbox-shell');
   const makeRandomInbox = () => {
     const adjectives = ['amber', 'brisk', 'calm', 'daring', 'fuzzy', 'golden', 'lucky', 'mellow', 'nimble', 'solar', 'swift', 'velvet'];
     const nouns = ['badger', 'comet', 'falcon', 'fern', 'otter', 'panda', 'raven', 'river', 'tiger', 'willow', 'wren', 'zebra'];
@@ -55,6 +57,8 @@ const uiScript = `
       button.classList.toggle('active', active);
       button.setAttribute('aria-selected', String(active));
       messages[i].classList.toggle('active', active);
+      const frame = messages[i].querySelector('.html-frame');
+      if (active && frame && !frame.hasAttribute('src')) frame.src = frame.dataset.src;
     });
   };
   const buttons = messages.map((message, index) => {
@@ -70,6 +74,29 @@ const uiScript = `
     button.querySelector('.message-item-preview').textContent = body;
     button.addEventListener('click', () => select(index));
     list.append(button);
+    if (message.dataset.hasHtml === 'true') {
+      const plainBody = message.querySelector('.plain-body');
+      const toolbar = document.createElement('div');
+      toolbar.className = 'message-body-toolbar';
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'html-toggle';
+      toggle.textContent = 'View plain text';
+      const frame = document.createElement('iframe');
+      frame.className = 'html-frame';
+      frame.title = 'HTML email: ' + subject;
+      frame.dataset.src = '/ui/messages/' + encodeURIComponent(message.dataset.messageId) + '/html';
+      frame.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
+      if (plainBody) plainBody.hidden = true;
+      toggle.addEventListener('click', () => {
+        const showPlain = plainBody && plainBody.hidden;
+        if (plainBody) plainBody.hidden = !showPlain;
+        frame.hidden = showPlain;
+        toggle.textContent = showPlain ? 'View HTML' : 'View plain text';
+      });
+      toolbar.append(toggle);
+      message.querySelector('.details')?.after(toolbar, frame);
+    }
     message.classList.add('email-view');
     reader.append(message);
     return button;
@@ -85,25 +112,6 @@ const uiScript = `
       .then(response => response.ok ? response.json() : null)
       .then(page => {
         if (!page) return;
-        page.messages.forEach((item, index) => {
-          const message = messages[index];
-          if (!message) return;
-          const toggle = document.createElement('button');
-          toggle.type = 'button';
-          toggle.className = 'html-toggle';
-          toggle.textContent = 'View HTML';
-          toggle.addEventListener('click', async () => {
-            const url = '/ui/messages/' + encodeURIComponent(item.id) + '/html';
-            const response = await fetch(url);
-            if (!response.ok) { toggle.textContent = 'No HTML version'; return; }
-            const frame = document.createElement('iframe');
-            frame.className = 'html-frame';
-            frame.sandbox = '';
-            frame.src = url;
-            toggle.replaceWith(frame);
-          });
-          message.querySelector('.details')?.after(toggle);
-        });
         if (!page.hasMore && offset === 0) return;
         const navigation = document.createElement('nav');
         navigation.className = 'pagination';
