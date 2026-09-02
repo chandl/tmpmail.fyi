@@ -1,6 +1,6 @@
 # Canary
 
-`canary` is a small standalone Go service that continuously performs the tmpmail end-to-end contract: it sends a unique SMTP message, finds that exact message in the recipient inbox API, fetches it from the message API, and verifies recipient, sender, subject, and body. It exposes JSON health on `GET /healthz`; it returns `200` when all checks pass and `503` when a check fails. `GET /livez` always returns `200` while the process is running.
+`canary` is a small standalone Go service that continuously performs the tmpmail end-to-end contract: it sends a unique SMTP message, finds that exact message in the recipient inbox API, fetches it from the message API, and verifies recipient, sender, subject, and body. It then loads the browser inbox page and verifies that the probe body is rendered and the UI assets are cache-busted. It exposes JSON health on `GET /healthz`; it returns `200` when all checks pass and `503` when a check fails. `GET /livez` always returns `200` while the process is running.
 
 ## Run
 
@@ -48,4 +48,4 @@ For a ready-to-edit deployment, `docker compose up --build -d` from this directo
 | `CANARY_API_URL` | `http://tmpmail:8080` | tmpmail HTTP API base URL. |
 | `CANARY_FROM` | `canary@monitor.invalid` | Sender used for the probe message. |
 
-Every run checks the tmpmail HTTP health endpoint, then exercises SMTP receipt, inbox listing, and individual-message retrieval. The canary creates a unique disposable recipient per run, so it never confuses an old message with the new probe.
+Every run checks the tmpmail HTTP health endpoint, then exercises SMTP receipt, inbox listing, individual-message retrieval, and the rendered inbox page. The canary creates a unique disposable recipient per run, so it never confuses an old message with the new probe.

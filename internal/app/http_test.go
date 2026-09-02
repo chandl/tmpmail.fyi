@@ -138,8 +138,14 @@ func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	if !strings.Contains(page, "<title>tmpmail - build@mail.test</title>") {
 		t.Fatalf("expected inbox-specific page title, got %q", page)
 	}
+	if !strings.Contains(page, `/ui.js?v=2`) || !strings.Contains(page, `/ui.css?v=2`) {
+		t.Fatalf("expected cache-busted UI assets, got %q", page)
+	}
 	if !strings.Contains(page, "Message headers") || !strings.Contains(page, `data-message-id="`) {
 		t.Fatalf("expected message metadata and loading targets, got %q", page)
+	}
+	if !strings.Contains(page, ">body</pre>") {
+		t.Fatalf("expected the initial render to contain the message body, got %q", page)
 	}
 	if !strings.Contains(page, "tmpmail:last-inbox") {
 		t.Fatalf("expected last inbox browser storage, got %q", page)

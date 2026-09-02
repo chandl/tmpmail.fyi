@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -83,7 +84,7 @@ func runAPIHealthCheck(ctx context.Context, cfg config) checkResult {
 	return timedCheck("api-health", func() error { return expectStatus(ctx, cfg.APIURL+"/healthz", http.StatusNoContent) })
 }
 func runMailFlowCheck(ctx context.Context, cfg config) checkResult {
-	return timedCheck("smtp-to-api-message-flow", func() error {
+	return timedCheck("smtp-to-api-and-ui-message-flow", func() error {
 		token, err := randomToken()
 		if err != nil {
 			return err
@@ -108,8 +109,42 @@ func runMailFlowCheck(ctx context.Context, cfg config) checkResult {
 		if !strings.Contains(message.Body, body) {
 			return fmt.Errorf("message body does not contain probe token")
 		}
-		return nil
+		return verifyInboxUI(ctx, cfg.APIURL, recipient, body)
 	})
+}
+
+// verifyInboxUI checks the rendered inbox page rather than only its JSON API.
+// It detects a deployment or cache mismatch that leaves an otherwise valid
+// message body empty in the browser.
+func verifyInboxUI(ctx context.Context, apiURL, recipient, body string) error {
+	inbox, _, ok := strings.Cut(recipient, "@")
+	if !ok || inbox == "" {
+		return fmt.Errorf("invalid probe recipient %q", recipient)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL+"/?inbox="+url.QueryEscape(inbox), nil)
+	if err != nil {
+		return err
+	}
+	response, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("load inbox UI: got HTTP %d", response.StatusCode)
+	}
+	page, err := io.ReadAll(io.LimitReader(response.Body, 3<<20))
+	if err != nil {
+		return fmt.Errorf("read inbox UI: %w", err)
+	}
+	contents := string(page)
+	if !strings.Contains(contents, body) {
+		return fmt.Errorf("inbox UI does not render probe message body")
+	}
+	if !strings.Contains(contents, "/ui.js?v=") || !strings.Contains(contents, "/ui.css?v=") {
+		return fmt.Errorf("inbox UI does not reference cache-busted assets")
+	}
+	return nil
 }
 func timedCheck(name string, fn func() error) checkResult {
 	start := time.Now()
