@@ -3509,6 +3509,94 @@
           }
         }
       },
+      "panel-44": {
+        "kind": "Panel",
+        "spec": {
+          "id": 44,
+          "title": "HTTP Response Size by Route",
+          "description": "Response throughput by normalized application route and status.",
+          "links": [],
+          "data": {"kind": "QueryGroup", "spec": {"queries": [{"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "sum by (route, status) (rate(tmpmail_http_response_bytes_total{route=~\"/|/api/.*\"}[$__rate_interval]))", "legendFormat": "{{route}} {{status}}", "range": true}}, "refId": "A", "hidden": false}}], "transformations": [], "queryOptions": {}}},
+          "vizConfig": {"kind": "VizConfig", "group": "timeseries", "version": "", "spec": {"options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}}, "fieldConfig": {"defaults": {"unit": "Bps", "decimals": 1, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "spanNulls": true}}, "overrides": []}}}
+        }
+      },
+      "panel-45": {
+        "kind": "Panel",
+        "spec": {
+          "id": 45,
+          "title": "HTTP Concurrency & Limit Events",
+          "description": "In-flight work alongside requests rejected by concurrency limits and canceled while processing.",
+          "links": [],
+          "data": {"kind": "QueryGroup", "spec": {"queries": [{"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "tmpmail_http_requests_in_flight", "legendFormat": "in flight", "range": true}}, "refId": "A", "hidden": false}}, {"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "increase(tmpmail_http_overload_rejections_total[$__rate_interval])", "legendFormat": "overload rejections", "range": true}}, "refId": "B", "hidden": false}}, {"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "increase(tmpmail_http_canceled_requests_total[$__rate_interval])", "legendFormat": "canceled", "range": true}}, "refId": "C", "hidden": false}}], "transformations": [], "queryOptions": {}}},
+          "vizConfig": {"kind": "VizConfig", "group": "timeseries", "version": "", "spec": {"options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}}, "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "spanNulls": true}}, "overrides": []}}}
+        }
+      },
+      "panel-46": {
+        "kind": "Panel",
+        "spec": {
+          "id": 46,
+          "title": "SMTP Connection Admissions",
+          "description": "SMTP connection admission attempts by outcome.",
+          "links": [],
+          "data": {"kind": "QueryGroup", "spec": {"queries": [{"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "sum by (result) (increase(tmpmail_smtp_connections_total[$__rate_interval]))", "legendFormat": "{{result}}", "range": true}}, "refId": "A", "hidden": false}}], "transformations": [], "queryOptions": {}}},
+          "vizConfig": {"kind": "VizConfig", "group": "timeseries", "version": "", "spec": {"options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}}, "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "spanNulls": true}}, "overrides": []}}}
+        }
+      },
+      "panel-47": {
+        "kind": "Panel",
+        "spec": {
+          "id": 47,
+          "title": "SMTP Session Duration",
+          "description": "SMTP session handling latency by outcome.",
+          "links": [],
+          "data": {"kind": "QueryGroup", "spec": {"queries": [{"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "histogram_quantile(0.50, sum by (le, result) (rate(tmpmail_smtp_session_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "p50 {{result}}", "range": true}}, "refId": "A", "hidden": false}}, {"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, result) (rate(tmpmail_smtp_session_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "p95 {{result}}", "range": true}}, "refId": "B", "hidden": false}}, {"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "histogram_quantile(0.99, sum by (le, result) (rate(tmpmail_smtp_session_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "p99 {{result}}", "range": true}}, "refId": "C", "hidden": false}}], "transformations": [], "queryOptions": {}}},
+          "vizConfig": {"kind": "VizConfig", "group": "timeseries", "version": "", "spec": {"options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}}, "fieldConfig": {"defaults": {"unit": "s", "decimals": 3, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "spanNulls": true}}, "overrides": []}}}
+        }
+      },
+      "panel-48": {
+        "kind": "Panel",
+        "spec": {
+          "id": 48,
+          "title": "SMTP Protective Rejections",
+          "description": "SMTP rejections caused by configured protective limits.",
+          "links": [],
+          "data": {"kind": "QueryGroup", "spec": {"queries": [{"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "sum by (reason) (increase(tmpmail_smtp_rejections_total[$__rate_interval]))", "legendFormat": "{{reason}}", "range": true}}, "refId": "A", "hidden": false}}], "transformations": [], "queryOptions": {}}},
+          "vizConfig": {"kind": "VizConfig", "group": "timeseries", "version": "", "spec": {"options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}}, "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "bars", "fillOpacity": 40, "lineWidth": 1, "showPoints": "never", "spanNulls": true}}, "overrides": []}}}
+        }
+      },
+      "panel-49": {
+        "kind": "Panel",
+        "spec": {
+          "id": 49,
+          "title": "Storage Errors",
+          "description": "Storage operation failures by operation.",
+          "links": [],
+          "data": {"kind": "QueryGroup", "spec": {"queries": [{"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "sum by (operation) (increase(tmpmail_storage_errors_total[$__rate_interval]))", "legendFormat": "{{operation}}", "range": true}}, "refId": "A", "hidden": false}}], "transformations": [], "queryOptions": {}}},
+          "vizConfig": {"kind": "VizConfig", "group": "timeseries", "version": "", "spec": {"options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}}, "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "bars", "fillOpacity": 40, "lineWidth": 1, "showPoints": "never", "spanNulls": true}}, "overrides": []}}}
+        }
+      },
+      "panel-50": {
+        "kind": "Panel",
+        "spec": {
+          "id": 50,
+          "title": "SQLite Connections",
+          "description": "Open and currently in-use SQLite connections.",
+          "links": [],
+          "data": {"kind": "QueryGroup", "spec": {"queries": [{"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "tmpmail_storage_db_open_connections", "legendFormat": "open", "range": true}}, "refId": "A", "hidden": false}}, {"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "tmpmail_storage_db_in_use_connections", "legendFormat": "in use", "range": true}}, "refId": "B", "hidden": false}}], "transformations": [], "queryOptions": {}}},
+          "vizConfig": {"kind": "VizConfig", "group": "timeseries", "version": "", "spec": {"options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}}, "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "spanNulls": true}}, "overrides": []}}}
+        }
+      },
+      "panel-51": {
+        "kind": "Panel",
+        "spec": {
+          "id": 51,
+          "title": "Storage Save Stage Duration (p95)",
+          "description": "p95 time in each persistence stage, split by outcome.",
+          "links": [],
+          "data": {"kind": "QueryGroup", "spec": {"queries": [{"kind": "PanelQuery", "spec": {"query": {"kind": "DataQuery", "group": "prometheus", "version": "v0", "datasource": {"name": "${DS_PROMETHEUS}"}, "spec": {"editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, stage, result) (rate(tmpmail_storage_save_stage_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "{{stage}} {{result}}", "range": true}}, "refId": "A", "hidden": false}}], "transformations": [], "queryOptions": {}}},
+          "vizConfig": {"kind": "VizConfig", "group": "timeseries", "version": "", "spec": {"options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}}, "fieldConfig": {"defaults": {"unit": "s", "decimals": 3, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "spanNulls": true}}, "overrides": []}}}
+        }
+      },
       "panel-43": {
         "kind": "Panel",
         "spec": {
@@ -4735,6 +4823,28 @@
                         }
                       }
                     }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "kind": "RowsLayoutRow",
+            "spec": {
+              "title": "Admission & Storage Detail",
+              "collapse": false,
+              "layout": {
+                "kind": "GridLayout",
+                "spec": {
+                  "items": [
+                    {"kind": "GridLayoutItem", "spec": {"x": 0, "y": 0, "width": 12, "height": 8, "element": {"kind": "ElementReference", "name": "panel-44"}}},
+                    {"kind": "GridLayoutItem", "spec": {"x": 12, "y": 0, "width": 12, "height": 8, "element": {"kind": "ElementReference", "name": "panel-45"}}},
+                    {"kind": "GridLayoutItem", "spec": {"x": 0, "y": 8, "width": 8, "height": 8, "element": {"kind": "ElementReference", "name": "panel-46"}}},
+                    {"kind": "GridLayoutItem", "spec": {"x": 8, "y": 8, "width": 8, "height": 8, "element": {"kind": "ElementReference", "name": "panel-47"}}},
+                    {"kind": "GridLayoutItem", "spec": {"x": 16, "y": 8, "width": 8, "height": 8, "element": {"kind": "ElementReference", "name": "panel-48"}}},
+                    {"kind": "GridLayoutItem", "spec": {"x": 0, "y": 16, "width": 8, "height": 8, "element": {"kind": "ElementReference", "name": "panel-49"}}},
+                    {"kind": "GridLayoutItem", "spec": {"x": 8, "y": 16, "width": 8, "height": 8, "element": {"kind": "ElementReference", "name": "panel-50"}}},
+                    {"kind": "GridLayoutItem", "spec": {"x": 16, "y": 16, "width": 8, "height": 8, "element": {"kind": "ElementReference", "name": "panel-51"}}}
                   ]
                 }
               }
