@@ -35,6 +35,8 @@ type SMTPServer struct {
 	mu       sync.Mutex
 	sessions chan struct{}
 	rejects  chan struct{}
+	sourceMu sync.Mutex
+	sources  map[string]int
 }
 
 func NewSMTPServer(cfg Config, store *Store) *SMTPServer {
@@ -42,7 +44,7 @@ func NewSMTPServer(cfg Config, store *Store) *SMTPServer {
 	if limit == 0 {
 		limit = defaultMaxSMTPConnections
 	}
-	return &SMTPServer{cfg: cfg, store: store, sessions: make(chan struct{}, limit), rejects: make(chan struct{}, maxConcurrentSMTPRejections)}
+	return &SMTPServer{cfg: cfg, store: store, sessions: make(chan struct{}, limit), rejects: make(chan struct{}, maxConcurrentSMTPRejections), sources: make(map[string]int)}
 }
 
 func (s *SMTPServer) ListenAndServe(ctx context.Context) error {
@@ -66,12 +68,19 @@ func (s *SMTPServer) ListenAndServe(ctx context.Context) error {
 		}
 		select {
 		case s.sessions <- struct{}{}:
+			source := sourceAddress(conn.RemoteAddr())
+			if !s.acquireSource(source) {
+				<-s.sessions
+				s.scheduleRejection(conn, "per_ip_limit")
+				continue
+			}
 			if s.cfg.MetricsEnabled {
 				smtpConnectionsTotal.WithLabelValues("accepted").Inc()
 			}
 			go func(conn net.Conn) {
 				sessionStarted := time.Now()
 				defer func() {
+					s.releaseSource(source)
 					<-s.sessions
 					if s.cfg.MetricsEnabled {
 						smtpConnections.Dec()
@@ -84,14 +93,14 @@ func (s *SMTPServer) ListenAndServe(ctx context.Context) error {
 				s.handle(conn)
 			}(conn)
 		default:
-			s.scheduleRejection(conn)
+			s.scheduleRejection(conn, "global_limit")
 		}
 	}
 }
 
-func (s *SMTPServer) scheduleRejection(conn net.Conn) {
+func (s *SMTPServer) scheduleRejection(conn net.Conn, reason string) {
 	if s.cfg.MetricsEnabled {
-		smtpRejections.WithLabelValues("global_limit").Inc()
+		smtpRejections.WithLabelValues(reason).Inc()
 		smtpConnectionsTotal.WithLabelValues("rejected").Inc()
 	}
 	select {
@@ -107,6 +116,34 @@ func (s *SMTPServer) scheduleRejection(conn net.Conn) {
 		// the accept loop during a connection flood.
 		_ = conn.Close()
 	}
+}
+
+func (s *SMTPServer) acquireSource(source string) bool {
+	s.sourceMu.Lock()
+	defer s.sourceMu.Unlock()
+	if s.cfg.MaxSMTPConnectionsPerIP > 0 && s.sources[source] >= s.cfg.MaxSMTPConnectionsPerIP {
+		return false
+	}
+	s.sources[source]++
+	return true
+}
+
+func (s *SMTPServer) releaseSource(source string) {
+	s.sourceMu.Lock()
+	defer s.sourceMu.Unlock()
+	if s.sources[source] <= 1 {
+		delete(s.sources, source)
+		return
+	}
+	s.sources[source]--
+}
+
+func sourceAddress(addr net.Addr) string {
+	host, _, err := net.SplitHostPort(addr.String())
+	if err == nil {
+		return host
+	}
+	return addr.String()
 }
 
 func (s *SMTPServer) Close() error {
@@ -237,7 +274,7 @@ func (s *SMTPServer) handle(conn net.Conn) {
 					stored = false
 					break
 				}
-				log.Printf("[smtp receive] id=%s recipient=%s sender=%s bytes=%d", message.ID, message.Recipient, sender, message.Size)
+				log.Printf("[smtp receive] id=%s recipient=%s sender=%s source_ip=%s bytes=%d", message.ID, message.Recipient, sender, sourceAddress(conn.RemoteAddr()), message.Size)
 				if s.cfg.MetricsEnabled {
 					smtpMessages.WithLabelValues("accepted").Inc()
 					smtpMessageBytes.Add(float64(message.Size))

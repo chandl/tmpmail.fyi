@@ -10,19 +10,20 @@ import (
 )
 
 type Config struct {
-	MailDomain         string
-	DataDir            string
-	SMTPAddr           string
-	HTTPAddr           string
-	MetricsAddr        string
-	MessageTTL         time.Duration
-	MaxMessageBytes    int64
-	MaxStorageBytes    int64
-	MaxSMTPConnections int
-	MaxHTTPRequests    int
-	MetricsEnabled     bool
-	HTTPAccessLogMode  string
-	HTTPLogHeaders     []string
+	MailDomain              string
+	DataDir                 string
+	SMTPAddr                string
+	HTTPAddr                string
+	MetricsAddr             string
+	MessageTTL              time.Duration
+	MaxMessageBytes         int64
+	MaxStorageBytes         int64
+	MaxSMTPConnections      int
+	MaxSMTPConnectionsPerIP int
+	MaxHTTPRequests         int
+	MetricsEnabled          bool
+	HTTPAccessLogMode       string
+	HTTPLogHeaders          []string
 }
 
 func LoadConfig() (Config, error) {
@@ -42,6 +43,10 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("SMTP_MAX_CONNECTIONS: %w", err)
 	}
+	maxSMTPConnectionsPerIP, err := nonNegativeInt(env("SMTP_MAX_CONNECTIONS_PER_IP", "10"))
+	if err != nil {
+		return Config{}, fmt.Errorf("SMTP_MAX_CONNECTIONS_PER_IP: %w", err)
+	}
 	maxHTTPRequests, err := nonNegativeInt(env("HTTP_MAX_CONCURRENT_REQUESTS", "512"))
 	if err != nil {
 		return Config{}, fmt.Errorf("HTTP_MAX_CONCURRENT_REQUESTS: %w", err)
@@ -58,7 +63,7 @@ func LoadConfig() (Config, error) {
 	if accessLogMode != "all" && accessLogMode != "errors" && accessLogMode != "off" {
 		return Config{}, fmt.Errorf("HTTP_ACCESS_LOG_MODE must be all, errors, or off")
 	}
-	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders}, nil
+	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxSMTPConnectionsPerIP: maxSMTPConnectionsPerIP, MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders}, nil
 }
 
 func parseHTTPLogHeaders(value string) ([]string, error) {

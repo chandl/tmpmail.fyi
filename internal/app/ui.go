@@ -57,9 +57,52 @@ const uiScript = `
       button.classList.toggle('active', active);
       button.setAttribute('aria-selected', String(active));
       messages[i].classList.toggle('active', active);
-      const frame = messages[i].querySelector('.html-frame');
-      if (active && frame && !frame.hasAttribute('src')) frame.src = frame.dataset.src;
     });
+    loadMessage(messages[index]);
+  };
+  const addHTMLReader = (message) => {
+    if (message.dataset.htmlPrepared === 'true') return;
+    message.dataset.htmlPrepared = 'true';
+    const plainBody = message.querySelector('.plain-body');
+    const toolbar = document.createElement('div');
+    toolbar.className = 'message-body-toolbar';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'html-toggle';
+    toggle.textContent = 'View plain text';
+    const frame = document.createElement('iframe');
+    frame.className = 'html-frame';
+    frame.title = 'HTML email: ' + (message.querySelector('.subject')?.textContent || '(no subject)');
+    frame.src = '/ui/messages/' + encodeURIComponent(message.dataset.messageId) + '/html';
+    frame.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
+    if (plainBody) plainBody.hidden = true;
+    toggle.addEventListener('click', () => {
+      const showPlain = plainBody && plainBody.hidden;
+      if (plainBody) plainBody.hidden = !showPlain;
+      frame.hidden = showPlain;
+      toggle.textContent = showPlain ? 'View HTML' : 'View plain text';
+    });
+    toolbar.append(toggle);
+    message.querySelector('.details')?.after(toolbar, frame);
+  };
+  const loadMessage = (message) => {
+    if (!message || message.dataset.loaded === 'true' || message.dataset.loading === 'true') return;
+    message.dataset.loading = 'true';
+    const body = message.querySelector('.plain-body pre');
+    const headers = message.querySelector('details pre');
+    if (body) body.textContent = 'Loading message…';
+    fetch('/ui/messages/' + encodeURIComponent(message.dataset.messageId))
+      .then(response => response.ok ? response.json() : Promise.reject())
+      .then(page => {
+        if (body) body.textContent = page.text;
+        if (headers) headers.textContent = page.headers;
+        message.dataset.loaded = 'true';
+        if (page.hasHtml) addHTMLReader(message);
+      })
+      .catch(() => {
+        if (body) body.textContent = 'Message is no longer available.';
+      })
+      .finally(() => { delete message.dataset.loading; });
   };
   const buttons = messages.map((message, index) => {
     const button = document.createElement('button');
@@ -67,36 +110,11 @@ const uiScript = `
     button.className = 'message-item';
     const subject = message.querySelector('.subject')?.textContent || '(no subject)';
     const details = message.querySelector('.details')?.textContent || '';
-    const body = message.querySelector('pre')?.textContent.replace(/\s+/g, ' ').trim() || '';
     button.innerHTML = '<span class="message-item-subject"></span><span class="message-item-meta"></span><span class="message-item-preview"></span>';
     button.querySelector('.message-item-subject').textContent = subject;
     button.querySelector('.message-item-meta').textContent = details;
-    button.querySelector('.message-item-preview').textContent = body;
     button.addEventListener('click', () => select(index));
     list.append(button);
-    if (message.dataset.hasHtml === 'true') {
-      const plainBody = message.querySelector('.plain-body');
-      const toolbar = document.createElement('div');
-      toolbar.className = 'message-body-toolbar';
-      const toggle = document.createElement('button');
-      toggle.type = 'button';
-      toggle.className = 'html-toggle';
-      toggle.textContent = 'View plain text';
-      const frame = document.createElement('iframe');
-      frame.className = 'html-frame';
-      frame.title = 'HTML email: ' + subject;
-      frame.dataset.src = '/ui/messages/' + encodeURIComponent(message.dataset.messageId) + '/html';
-      frame.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
-      if (plainBody) plainBody.hidden = true;
-      toggle.addEventListener('click', () => {
-        const showPlain = plainBody && plainBody.hidden;
-        if (plainBody) plainBody.hidden = !showPlain;
-        frame.hidden = showPlain;
-        toggle.textContent = showPlain ? 'View HTML' : 'View plain text';
-      });
-      toolbar.append(toggle);
-      message.querySelector('.details')?.after(toolbar, frame);
-    }
     message.classList.add('email-view');
     reader.append(message);
     return button;

@@ -138,8 +138,8 @@ func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	if !strings.Contains(page, "<title>tmpmail - build@mail.test</title>") {
 		t.Fatalf("expected inbox-specific page title, got %q", page)
 	}
-	if !strings.Contains(page, "Message headers") || !strings.Contains(page, "body") {
-		t.Fatalf("expected separate message sections, got %q", page)
+	if !strings.Contains(page, "Message headers") || !strings.Contains(page, `data-message-id="`) {
+		t.Fatalf("expected message metadata and loading targets, got %q", page)
 	}
 	if !strings.Contains(page, "tmpmail:last-inbox") {
 		t.Fatalf("expected last inbox browser storage, got %q", page)
@@ -222,7 +222,7 @@ func TestHTMLMessageUsesLightTheme(t *testing.T) {
 	}
 }
 
-func TestInboxMarksHTMLMessagesForDefaultRendering(t *testing.T) {
+func TestInboxLoadsSelectedMessageOnDemand(t *testing.T) {
 	store := testStore(t, time.Hour)
 	message, err := store.Save("build@mail.test", "sender@example.org", []byte("Content-Type: multipart/alternative; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nPlain body\r\n--x\r\nContent-Type: text/html\r\n\r\n<p>HTML body</p>\r\n--x--\r\n"))
 	if err != nil {
@@ -232,14 +232,19 @@ func TestInboxMarksHTMLMessagesForDefaultRendering(t *testing.T) {
 	page := httptest.NewRecorder()
 	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/?inbox=build", nil))
-	if !strings.Contains(page.Body.String(), `data-message-id="`+message.ID+`" data-has-html="true"`) || !strings.Contains(page.Body.String(), `class="plain-body"`) {
-		t.Fatalf("expected server-rendered HTML availability, got %q", page.Body.String())
+	if !strings.Contains(page.Body.String(), `data-message-id="`+message.ID+`"`) || strings.Contains(page.Body.String(), "HTML body") {
+		t.Fatalf("expected page to contain only message metadata, got %q", page.Body.String())
+	}
+	details := httptest.NewRecorder()
+	handler.ServeHTTP(details, httptest.NewRequest(http.MethodGet, "/ui/messages/"+message.ID, nil))
+	if details.Code != http.StatusOK || !strings.Contains(details.Body.String(), `"text":"Plain body"`) || !strings.Contains(details.Body.String(), `"hasHtml":true`) {
+		t.Fatalf("expected selected-message details, got status=%d body=%q", details.Code, details.Body.String())
 	}
 
 	script := httptest.NewRecorder()
 	handler.ServeHTTP(script, httptest.NewRequest(http.MethodGet, "/ui.js", nil))
 	contents := script.Body.String()
-	if !strings.Contains(contents, "message.dataset.hasHtml === 'true'") || !strings.Contains(contents, "View plain text") || !strings.Contains(contents, "allow-popups allow-popups-to-escape-sandbox") {
+	if !strings.Contains(contents, "fetch('/ui/messages/'") || !strings.Contains(contents, "View plain text") || !strings.Contains(contents, "allow-popups allow-popups-to-escape-sandbox") {
 		t.Fatalf("expected HTML-first reader with safe external navigation, got %q", contents)
 	}
 }
@@ -356,5 +361,21 @@ func TestMessageAPISeparatesHeadersAndBody(t *testing.T) {
 	}
 	if result.Headers != "From: sender@example.org\r\nSubject: hello" || result.Body != "body" {
 		t.Fatalf("expected separated headers and body, got %#v", result)
+	}
+}
+
+func TestMessageResponsesDoNotAllowCaching(t *testing.T) {
+	store := testStore(t, time.Hour)
+	message, err := store.Save("build@mail.test", "sender@example.org", []byte("Content-Type: text/html\r\n\r\n<p>body</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+	for _, path := range []string{"/?inbox=build", "/api/v1/inboxes/build@mail.test", "/api/v1/messages/" + message.ID, "/ui/messages/" + message.ID, "/ui/messages/" + message.ID + "/html"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Header().Get("Cache-Control") != "no-store, private" || response.Header().Get("Pragma") != "no-cache" {
+			t.Fatalf("expected no-store headers for %s, got %#v", path, response.Header())
+		}
 	}
 }

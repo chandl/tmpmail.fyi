@@ -53,6 +53,17 @@ func TestSMTPUsesConfigurableGlobalConnectionLimit(t *testing.T) {
 	}
 }
 
+func TestSMTPEnforcesConfigurablePerIPConnectionLimit(t *testing.T) {
+	server := NewSMTPServer(Config{MaxSMTPConnectionsPerIP: 2}, nil)
+	if !server.acquireSource("192.0.2.1") || !server.acquireSource("192.0.2.1") || server.acquireSource("192.0.2.1") {
+		t.Fatal("expected source admission limit to be enforced")
+	}
+	server.releaseSource("192.0.2.1")
+	if !server.acquireSource("192.0.2.1") {
+		t.Fatal("expected released source slot to be reusable")
+	}
+}
+
 func TestSMTPAcceptsOnlyConfiguredDomain(t *testing.T) {
 	s := NewSMTPServer(Config{MailDomain: "mail.test"}, nil)
 	if !s.accepts("inbox@mail.test") || s.accepts("inbox@elsewhere.test") {

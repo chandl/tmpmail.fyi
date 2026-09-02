@@ -12,9 +12,9 @@ services:
       MESSAGE_TTL: 1h
       MAX_MESSAGE_BYTES: 2097152
       MAX_STORAGE_BYTES: 21474836480
-      # A global admission cap; there is intentionally no source-IP limit because
-      # SMTP deployments often receive a trusted proxy's address instead.
+      # Protect legitimate senders from a single client holding every SMTP session.
       SMTP_MAX_CONNECTIONS: 100
+      SMTP_MAX_CONNECTIONS_PER_IP: 10 # Set to 0 only behind a trusted SMTP proxy.
       # Return fast 503 responses rather than exhausting the process under HTTP load.
       HTTP_MAX_CONCURRENT_REQUESTS: 512
       METRICS_ENABLED: "false"

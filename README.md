@@ -55,6 +55,7 @@ MESSAGE_TTL=1h
 MAX_MESSAGE_BYTES=2097152
 MAX_STORAGE_BYTES=21474836480
 SMTP_MAX_CONNECTIONS=100 # Global concurrent SMTP-session admission limit.
+SMTP_MAX_CONNECTIONS_PER_IP=10 # Per-source SMTP-session cap; set 0 only behind a trusted SMTP proxy.
 HTTP_MAX_CONCURRENT_REQUESTS=512 # Set to 0 only to disable HTTP overload shedding.
 METRICS_ENABLED=false # Start the separate metrics listener when true.
 HTTP_ACCESS_LOG_MODE=errors # all, errors, or off; errors avoids hot-path log pressure.
@@ -63,7 +64,7 @@ HTTP_LOG_HEADERS=User-Agent # Comma-separated request headers to include in HTTP
 
 `MAX_MESSAGE_BYTES` defaults to 2 MiB and `MAX_STORAGE_BYTES` defaults to 20 GiB. The global storage cap is enforced on every save: expired messages are removed first, then the oldest messages are evicted when necessary. A cleanup job also runs at startup and every minute.
 
-SMTP allows at most 100 concurrent sessions globally by default. There is intentionally no source-IP limit: SMTP deployments commonly see a proxy address rather than the originating sender. Set `SMTP_MAX_CONNECTIONS` according to the host's measured capacity; rejected connections receive a transient `421 4.3.2` response when possible. HTTP applies an independent 512-request concurrency limit by default and responds with `503` plus `Retry-After` under pressure.
+SMTP allows at most 100 concurrent sessions globally and 10 sessions per source IP by default. Set `SMTP_MAX_CONNECTIONS_PER_IP=0` only when a trusted SMTP proxy makes every connection appear to originate from the same address. Set the limits according to the host's measured capacity; rejected connections receive a transient `421 4.3.2` response when possible. Successful SMTP receives log the sender IP. HTTP applies an independent 512-request concurrency limit by default and responds with `503` plus `Retry-After` under pressure.
 
 `MAIL_DOMAIN` is required. Only recipients at that domain are accepted; every local part is a valid disposable inbox.
 

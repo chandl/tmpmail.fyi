@@ -125,6 +125,8 @@ func metricRoute(path, pattern string) string {
 		return "/api/v1/messages/{id}"
 	case strings.HasPrefix(path, "/ui/messages/") && strings.HasSuffix(path, "/html"):
 		return "/ui/messages/{id}/html"
+	case strings.HasPrefix(path, "/ui/messages/"):
+		return "/ui/messages/{id}"
 	default:
 		return path
 	}
