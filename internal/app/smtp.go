@@ -15,12 +15,12 @@ import (
 )
 
 const (
-	maxSMTPConnections      = 100
-	maxSMTPConnectionsPerIP = 10
-	maxSMTPCommandLineBytes = 8 << 10
-	maxSMTPDataLineBytes    = 8 << 10
-	maxSMTPRecipients       = 100
-	smtpSessionTimeout      = 2 * time.Minute
+	maxSMTPConnections             = 100
+	defaultMaxSMTPConnectionsPerIP = 10
+	maxSMTPCommandLineBytes        = 8 << 10
+	maxSMTPDataLineBytes           = 8 << 10
+	maxSMTPRecipients              = 100
+	smtpSessionTimeout             = 2 * time.Minute
 )
 
 var (
@@ -50,7 +50,7 @@ func (s *SMTPServer) ListenAndServe(ctx context.Context) error {
 	s.mu.Lock()
 	s.listener = listener
 	s.mu.Unlock()
-	log.Printf("SMTP listening on %s for %s", s.cfg.SMTPAddr, s.cfg.MailDomain)
+	log.Printf("SMTP listening on %s for %s (global_connection_limit=%d per_ip_connection_limit=%d)", s.cfg.SMTPAddr, s.cfg.MailDomain, maxSMTPConnections, s.cfg.MaxSMTPConnectionsPerIP)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -102,7 +102,7 @@ func (s *SMTPServer) acquireSource(addr net.Addr) (string, bool) {
 	source := sourceAddress(addr)
 	s.sourceMu.Lock()
 	defer s.sourceMu.Unlock()
-	if s.sources[source] >= maxSMTPConnectionsPerIP {
+	if s.cfg.MaxSMTPConnectionsPerIP > 0 && s.sources[source] >= s.cfg.MaxSMTPConnectionsPerIP {
 		return source, false
 	}
 	s.sources[source]++
