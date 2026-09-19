@@ -105,3 +105,11 @@ func TestAttachmentFlowCheckFailsWhenSMTPIsUnreachable(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
+
+func TestCanaryPNGIsAValidPNG(t *testing.T) {
+	data := canaryPNG()
+	signature := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	if len(data) < len(signature) || string(data[:len(signature)]) != string(signature) {
+		t.Fatalf("embedded canary attachment does not start with a PNG signature: %x", data)
+	}
+}

@@ -123,10 +123,10 @@ func runAttachmentFlowCheck(ctx context.Context, cfg config) checkResult {
 		recipient := "canary-attachment-" + token + "@" + cfg.MailDomain
 		subject := "canary attachment " + token
 		body := "canary attachment message " + token
-		filename := "canary-" + token + ".txt"
-		attachment := []byte("canary attachment payload " + token)
+		filename := "canary-" + token + ".png"
+		attachment := canaryPNG()
 
-		if err := smtpSendWithAttachment(ctx, cfg.SMTPAddr, cfg.From, recipient, subject, body, filename, "text/plain", attachment); err != nil {
+		if err := smtpSendWithAttachment(ctx, cfg.SMTPAddr, cfg.From, recipient, subject, body, filename, "image/png", attachment); err != nil {
 			return fmt.Errorf("send SMTP message with attachment: %w", err)
 		}
 		message, err := waitForMessage(ctx, cfg.APIURL, recipient, subject)
@@ -152,6 +152,19 @@ func runAttachmentFlowCheck(ctx context.Context, cfg config) checkResult {
 		}
 		return nil
 	})
+}
+
+// canaryPNGBase64 is a minimal valid 1x1 transparent PNG. Using a real,
+// openable image (rather than arbitrary bytes) means someone investigating
+// an incident can download the probe attachment and actually view it.
+const canaryPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+
+func canaryPNG() []byte {
+	data, err := base64.StdEncoding.DecodeString(canaryPNGBase64)
+	if err != nil {
+		panic("canary: invalid embedded PNG constant: " + err.Error())
+	}
+	return data
 }
 
 func downloadAttachment(ctx context.Context, apiURL, id string, index int) ([]byte, error) {
