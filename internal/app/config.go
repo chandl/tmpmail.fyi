@@ -27,6 +27,8 @@ type Config struct {
 	MetricsEnabled          bool
 	HTTPAccessLogMode       string
 	HTTPLogHeaders          []string
+	HTTPRateLimitRPS        float64
+	HTTPRateLimitBurst      int
 	HTTPRateLimitIPHeader   string
 }
 
@@ -83,7 +85,15 @@ func LoadConfig() (Config, error) {
 		}
 		rateLimitIPHeader = http.CanonicalHeaderKey(rateLimitIPHeader)
 	}
-	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), SMTPTLSCertFile: tlsCertFile, SMTPTLSKeyFile: tlsKeyFile, HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxSMTPConnectionsPerIP: maxSMTPConnectionsPerIP, MaxSMTPRecipients: int(maxSMTPRecipients), MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders, HTTPRateLimitIPHeader: rateLimitIPHeader}, nil
+	rateLimitRPS, err := positiveFloat(env("HTTP_RATE_LIMIT_RPS", strconv.Itoa(defaultRateLimitRPS)))
+	if err != nil {
+		return Config{}, fmt.Errorf("HTTP_RATE_LIMIT_RPS: %w", err)
+	}
+	rateLimitBurst, err := positiveInt(env("HTTP_RATE_LIMIT_BURST", strconv.Itoa(defaultRateLimitBurst)))
+	if err != nil {
+		return Config{}, fmt.Errorf("HTTP_RATE_LIMIT_BURST: %w", err)
+	}
+	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), SMTPTLSCertFile: tlsCertFile, SMTPTLSKeyFile: tlsKeyFile, HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxSMTPConnectionsPerIP: maxSMTPConnectionsPerIP, MaxSMTPRecipients: int(maxSMTPRecipients), MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders, HTTPRateLimitRPS: rateLimitRPS, HTTPRateLimitBurst: int(rateLimitBurst), HTTPRateLimitIPHeader: rateLimitIPHeader}, nil
 }
 
 func parseHTTPLogHeaders(value string) ([]string, error) {
@@ -127,6 +137,14 @@ func positiveInt(value string) (int64, error) {
 	n, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || n <= 0 {
 		return 0, fmt.Errorf("must be a positive integer")
+	}
+	return n, nil
+}
+
+func positiveFloat(value string) (float64, error) {
+	n, err := strconv.ParseFloat(value, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("must be a positive number")
 	}
 	return n, nil
 }
