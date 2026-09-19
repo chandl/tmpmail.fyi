@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -58,7 +59,7 @@ func (r *runner) runOnce(parent context.Context) {
 	log.Printf("canary run started")
 	ctx, cancel := context.WithTimeout(parent, r.cfg.Timeout)
 	defer cancel()
-	results := []checkResult{runAPIHealthCheck(ctx, r.cfg), runMailFlowCheck(ctx, r.cfg)}
+	results := []checkResult{runAPIHealthCheck(ctx, r.cfg), runMailFlowCheck(ctx, r.cfg), runAttachmentFlowCheck(ctx, r.cfg)}
 	status := "healthy"
 	for _, result := range results {
 		if result.Message == "" {
@@ -111,6 +112,76 @@ func runMailFlowCheck(ctx context.Context, cfg config) checkResult {
 		}
 		return verifyInboxUI(ctx, cfg.APIURL, recipient, body)
 	})
+}
+
+func runAttachmentFlowCheck(ctx context.Context, cfg config) checkResult {
+	return timedCheck("smtp-attachment-download", func() error {
+		token, err := randomToken()
+		if err != nil {
+			return err
+		}
+		recipient := "canary-attachment-" + token + "@" + cfg.MailDomain
+		subject := "canary attachment " + token
+		body := "canary attachment message " + token
+		filename := "canary-" + token + ".png"
+		attachment := canaryPNG()
+
+		if err := smtpSendWithAttachment(ctx, cfg.SMTPAddr, cfg.From, recipient, subject, body, filename, "image/png", attachment); err != nil {
+			return fmt.Errorf("send SMTP message with attachment: %w", err)
+		}
+		message, err := waitForMessage(ctx, cfg.APIURL, recipient, subject)
+		if err != nil {
+			return err
+		}
+		if len(message.Attachments) != 1 {
+			return fmt.Errorf("message attachments = %d, want 1", len(message.Attachments))
+		}
+		got := message.Attachments[0]
+		if got.Filename != filename {
+			return fmt.Errorf("attachment filename = %q, want %q", got.Filename, filename)
+		}
+		if got.Size != int64(len(attachment)) {
+			return fmt.Errorf("attachment size = %d, want %d", got.Size, len(attachment))
+		}
+		downloaded, err := downloadAttachment(ctx, cfg.APIURL, message.ID, got.Index)
+		if err != nil {
+			return err
+		}
+		if string(downloaded) != string(attachment) {
+			return fmt.Errorf("downloaded attachment content does not match what was sent")
+		}
+		return nil
+	})
+}
+
+// canaryPNGBase64 is a minimal valid 1x1 transparent PNG. Using a real,
+// openable image (rather than arbitrary bytes) means someone investigating
+// an incident can download the probe attachment and actually view it.
+const canaryPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+
+func canaryPNG() []byte {
+	data, err := base64.StdEncoding.DecodeString(canaryPNGBase64)
+	if err != nil {
+		panic("canary: invalid embedded PNG constant: " + err.Error())
+	}
+	return data
+}
+
+func downloadAttachment(ctx context.Context, apiURL, id string, index int) ([]byte, error) {
+	target := fmt.Sprintf("%s/api/v1/messages/%s/attachments/%d", apiURL, url.PathEscape(id), index)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download attachment: got HTTP %d", response.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(response.Body, 10<<20))
 }
 
 // verifyInboxUI checks the rendered inbox page rather than only its JSON API.
@@ -185,7 +256,14 @@ type messageSummary struct {
 }
 type messageDetail struct {
 	messageSummary
-	Body string `json:"body"`
+	Body        string              `json:"body"`
+	Attachments []attachmentSummary `json:"attachments"`
+}
+type attachmentSummary struct {
+	Index       int    `json:"index"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"contentType"`
+	Size        int64  `json:"size"`
 }
 
 func waitForMessage(ctx context.Context, apiURL, recipient, subject string) (messageDetail, error) {
@@ -257,6 +335,24 @@ func randomToken() (string, error) {
 }
 
 func smtpSend(ctx context.Context, address, from, to, subject, body string) error {
+	message := "To: " + to + "\r\nFrom: " + from + "\r\nSubject: " + subject + "\r\nDate: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n\r\n" + body + "\r\n"
+	return smtpDeliver(ctx, address, from, to, message)
+}
+
+// smtpSendWithAttachment sends a multipart/mixed message with one attachment
+// part, for canary checks that validate attachment upload and download.
+func smtpSendWithAttachment(ctx context.Context, address, from, to, subject, body, filename, attachmentContentType string, attachment []byte) error {
+	const boundary = "canary-boundary"
+	message := "To: " + to + "\r\nFrom: " + from + "\r\nSubject: " + subject + "\r\nDate: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n" +
+		"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"" + boundary + "\"\r\n\r\n" +
+		"--" + boundary + "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + body + "\r\n" +
+		"--" + boundary + "\r\nContent-Type: " + attachmentContentType + "; name=\"" + filename + "\"\r\nContent-Disposition: attachment; filename=\"" + filename + "\"\r\nContent-Transfer-Encoding: base64\r\n\r\n" +
+		base64.StdEncoding.EncodeToString(attachment) + "\r\n" +
+		"--" + boundary + "--\r\n"
+	return smtpDeliver(ctx, address, from, to, message)
+}
+
+func smtpDeliver(ctx context.Context, address, from, to, message string) error {
 	dialer := net.Dialer{}
 	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
@@ -286,8 +382,7 @@ func smtpSend(ctx context.Context, address, from, to, subject, body string) erro
 	if err := client.command(354, "DATA"); err != nil {
 		return err
 	}
-	message := "To: " + to + "\r\nFrom: " + from + "\r\nSubject: " + subject + "\r\nDate: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n\r\n" + body + "\r\n.\r\n"
-	if err := client.write(message); err != nil {
+	if err := client.write(message + ".\r\n"); err != nil {
 		return err
 	}
 	if _, err := client.response(250); err != nil {

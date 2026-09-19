@@ -69,6 +69,37 @@ paths:
           description: The message does not exist or has expired.
         '500':
           $ref: '#/components/responses/StorageError'
+  /api/v1/messages/{id}/attachments/{index}:
+    get:
+      operationId: getMessageAttachment
+      summary: Download one attachment from an active message
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The opaque message ID returned by the inbox endpoint.
+          schema:
+            type: string
+            pattern: '^[a-f0-9]{32}$'
+        - name: index
+          in: path
+          required: true
+          description: The attachment's index, as listed on the message.
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: The raw attachment content, with its original content type and a Content-Disposition attachment filename.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: The message, or the attachment index, does not exist or has expired.
+        '500':
+          $ref: '#/components/responses/StorageError'
 components:
   parameters:
     Inbox:
@@ -137,7 +168,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/MessageSummary'
         - type: object
-          required: [headers, body]
+          required: [headers, body, attachments]
           properties:
             headers:
               type: string
@@ -147,6 +178,31 @@ components:
               type: string
               description: Original raw MIME body, without RFC 822 headers or the separating blank line.
               example: "123456"
+            attachments:
+              type: array
+              items:
+                $ref: '#/components/schemas/Attachment'
+    Attachment:
+      type: object
+      required: [index, filename, contentType, size]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+          description: Position used to download this attachment, via /api/v1/messages/{id}/attachments/{index}.
+          example: 0
+        filename:
+          type: string
+          example: invoice.pdf
+        contentType:
+          type: string
+          example: application/pdf
+        size:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Decoded attachment size in bytes.
+          example: 20480
   responses:
     StorageError:
       description: The message store could not be read.

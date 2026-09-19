@@ -93,6 +93,53 @@ func TestSMTPDeliversMessageToInbox(t *testing.T) {
 	}
 }
 
+func TestSMTPDeliversSharedMessageToMultipleRecipientsWithoutDuplicatingStorage(t *testing.T) {
+	dataDir := t.TempDir()
+	msgDir := filepath.Join(dataDir, "messages")
+	store, err := OpenStore(filepath.Join(dataDir, "mail.db"), msgDir, Config{MailDomain: "mail.test", MessageTTL: time.Hour, MaxMessageBytes: 1024 * 1024, MaxStorageBytes: 1024 * 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	server := mustNewSMTPServer(t, Config{MailDomain: "mail.test", MaxMessageBytes: 1024 * 1024, MaxStorageBytes: 1024 * 1024}, store)
+	client, reader := startSMTPServer(t, server)
+
+	readSMTPResponse(t, reader, 220)
+	writeSMTPCommand(t, client, "EHLO test-client")
+	readSMTPResponse(t, reader, 250)
+	writeSMTPCommand(t, client, "MAIL FROM:<sender@example.org>")
+	readSMTPResponse(t, reader, 250)
+	writeSMTPCommand(t, client, "RCPT TO:<first@mail.test>")
+	readSMTPResponse(t, reader, 250)
+	writeSMTPCommand(t, client, "RCPT TO:<second@mail.test>")
+	readSMTPResponse(t, reader, 250)
+	writeSMTPCommand(t, client, "DATA")
+	readSMTPResponse(t, reader, 354)
+	if _, err := fmt.Fprint(client, "From: sender@example.org\r\nSubject: shared\r\n\r\nhello\r\n.\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	readSMTPResponse(t, reader, 250)
+	writeSMTPCommand(t, client, "QUIT")
+	readSMTPResponse(t, reader, 221)
+
+	for _, recipient := range []string{"first@mail.test", "second@mail.test"} {
+		messages, err := store.List(recipient)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(messages) != 1 || messages[0].Subject != "shared" {
+			t.Fatalf("unexpected inbox contents for %s: %#v", recipient, messages)
+		}
+	}
+	entries, err := os.ReadDir(msgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly one stored file for a two-recipient message, got %v", entries)
+	}
+}
+
 func TestSMTPLibraryEnforcesMessageSizeLimit(t *testing.T) {
 	store := testStore(t, time.Hour)
 	server := mustNewSMTPServer(t, Config{MailDomain: "mail.test", MaxMessageBytes: 8, MaxStorageBytes: 1024, MetricsEnabled: true}, store)

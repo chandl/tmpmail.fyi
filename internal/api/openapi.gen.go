@@ -22,6 +22,18 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Attachment defines model for Attachment.
+type Attachment struct {
+	ContentType string `json:"contentType"`
+	Filename    string `json:"filename"`
+
+	// Index Position used to download this attachment, via /api/v1/messages/{id}/attachments/{index}.
+	Index int `json:"index"`
+
+	// Size Decoded attachment size in bytes.
+	Size int64 `json:"size"`
+}
+
 // InboxPage defines model for InboxPage.
 type InboxPage struct {
 	// HasMore Whether another page is available after this one.
@@ -33,6 +45,8 @@ type InboxPage struct {
 
 // Message defines model for Message.
 type Message struct {
+	Attachments []Attachment `json:"attachments"`
+
 	// Body Original raw MIME body, without RFC 822 headers or the separating blank line.
 	Body      string    `json:"body"`
 	ExpiresAt time.Time `json:"expiresAt"`
@@ -82,6 +96,9 @@ type ServerInterface interface {
 	// GetMessage Retrieve one active message, with RFC 822 headers and MIME body separated
 	// (GET /api/v1/messages/{id})
 	GetMessage(w http.ResponseWriter, r *http.Request, id string)
+	// GetMessageAttachment Download one attachment from an active message
+	// (GET /api/v1/messages/{id}/attachments/{index})
+	GetMessageAttachment(w http.ResponseWriter, r *http.Request, id string, index int)
 	// Healthcheck Check whether the HTTP service is responsive
 	// (GET /healthz)
 	Healthcheck(w http.ResponseWriter, r *http.Request)
@@ -168,6 +185,41 @@ func (siw *ServerInterfaceWrapper) GetMessage(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMessage(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMessageAttachment operation middleware
+func (siw *ServerInterfaceWrapper) GetMessageAttachment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "index" -------------
+	var index int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "index", r.PathValue("index"), &index, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "index", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMessageAttachment(w, r, id, index)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -314,6 +366,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.Healthcheck)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/inboxes/{inbox}", wrapper.ListInboxMessages)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/messages/{id}", wrapper.GetMessage)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/messages/{id}/attachments/{index}", wrapper.GetMessageAttachment)
 
 	return m
 }
@@ -323,28 +376,32 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

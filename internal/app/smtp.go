@@ -244,16 +244,16 @@ func (s *smtpSession) Data(r io.Reader) error {
 		}
 		return &smtp.SMTPError{Code: 554, EnhancedCode: smtp.EnhancedCode{5, 0, 0}, Message: "message read failed"}
 	}
-	for _, recipient := range s.recipients {
-		message, err := s.server.store.Save(recipient, s.sender, raw)
-		if err != nil {
-			log.Printf("store message: %v", err)
-			if s.server.cfg.MetricsEnabled {
-				smtpMessages.WithLabelValues("failed").Inc()
-			}
-			observeDelivery(err)
-			return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "temporary storage failure"}
+	messages, err := s.server.store.Save(s.recipients, s.sender, raw)
+	if err != nil {
+		log.Printf("store message: %v", err)
+		if s.server.cfg.MetricsEnabled {
+			smtpMessages.WithLabelValues("failed").Inc()
 		}
+		observeDelivery(err)
+		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "temporary storage failure"}
+	}
+	for _, message := range messages {
 		log.Printf("[smtp receive] id=%s recipient=%s sender=%s source_ip=%s bytes=%d", message.ID, message.Recipient, s.sender, s.sourceIP, message.Size)
 		if s.server.cfg.MetricsEnabled {
 			smtpMessages.WithLabelValues("accepted").Inc()

@@ -117,9 +117,7 @@ func TestInboxShortcutUsesStableMetricsRoute(t *testing.T) {
 
 func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	store := testStore(t, time.Hour)
-	if _, err := store.Save("build@mail.test", "sender@example.org", []byte("Subject: hello\r\n\r\nbody")); err != nil {
-		t.Fatal(err)
-	}
+	saveOne(t, store, "build@mail.test", "sender@example.org", []byte("Subject: hello\r\n\r\nbody"))
 
 	request := httptest.NewRequest(http.MethodGet, "/?inbox=build", nil)
 	response := httptest.NewRecorder()
@@ -209,10 +207,7 @@ func TestInboxShortcutDoesNotOverrideRegisteredPaths(t *testing.T) {
 
 func TestHTMLMessageUsesLightTheme(t *testing.T) {
 	store := testStore(t, time.Hour)
-	message, err := store.Save("build@mail.test", "sender@example.org", []byte("Content-Type: text/html\r\n\r\n<style>p{color:red}</style><p>Hello <a href=\"https://example.com\">world</a></p>"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	message := saveOne(t, store, "build@mail.test", "sender@example.org", []byte("Content-Type: text/html\r\n\r\n<style>p{color:red}</style><p>Hello <a href=\"https://example.com\">world</a></p>"))
 	response := httptest.NewRecorder()
 	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/ui/messages/"+message.ID+"/html", nil))
 
@@ -230,10 +225,7 @@ func TestHTMLMessageUsesLightTheme(t *testing.T) {
 
 func TestInboxLoadsSelectedMessageOnDemand(t *testing.T) {
 	store := testStore(t, time.Hour)
-	message, err := store.Save("build@mail.test", "sender@example.org", []byte("Content-Type: multipart/alternative; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nPlain body\r\n--x\r\nContent-Type: text/html\r\n\r\n<p>HTML body</p>\r\n--x--\r\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	message := saveOne(t, store, "build@mail.test", "sender@example.org", []byte("Content-Type: multipart/alternative; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nPlain body\r\n--x\r\nContent-Type: text/html\r\n\r\n<p>HTML body</p>\r\n--x--\r\n"))
 
 	page := httptest.NewRecorder()
 	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
@@ -252,6 +244,65 @@ func TestInboxLoadsSelectedMessageOnDemand(t *testing.T) {
 	contents := script.Body.String()
 	if !strings.Contains(contents, "fetch('/ui/messages/'") || !strings.Contains(contents, "View plain text") || !strings.Contains(contents, "allow-popups allow-popups-to-escape-sandbox") {
 		t.Fatalf("expected HTML-first reader with safe external navigation, got %q", contents)
+	}
+}
+
+func TestMessageAttachmentEndpointServesContentAndRejectsBadIndex(t *testing.T) {
+	store := testStore(t, time.Hour)
+	raw := "Content-Type: multipart/mixed; boundary=x\r\n\r\n" +
+		"--x\r\nContent-Type: text/plain\r\n\r\nbody\r\n" +
+		"--x\r\nContent-Type: text/csv; name=\"report.csv\"\r\nContent-Disposition: attachment; filename=\"report.csv\"\r\n\r\na,b,c\r\n" +
+		"--x--\r\n"
+	message := saveOne(t, store, "build@mail.test", "sender@example.org", []byte(raw))
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/messages/"+message.ID+"/attachments/0", nil))
+	if response.Code != http.StatusOK || response.Body.String() != "a,b,c" {
+		t.Fatalf("expected attachment content, got status=%d body=%q", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Header().Get("Content-Disposition"), `filename="report.csv"`) {
+		t.Fatalf("expected attachment filename in Content-Disposition, got %q", response.Header().Get("Content-Disposition"))
+	}
+
+	missing := httptest.NewRecorder()
+	handler.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/api/v1/messages/"+message.ID+"/attachments/5", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an out-of-range attachment index, got %d", missing.Code)
+	}
+
+	unknownMessage := httptest.NewRecorder()
+	handler.ServeHTTP(unknownMessage, httptest.NewRequest(http.MethodGet, "/api/v1/messages/00000000000000000000000000000000/attachments/0", nil))
+	if unknownMessage.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an unknown message, got %d", unknownMessage.Code)
+	}
+}
+
+func TestMessageAndUIResponsesListAttachments(t *testing.T) {
+	store := testStore(t, time.Hour)
+	raw := "Content-Type: multipart/mixed; boundary=x\r\n\r\n" +
+		"--x\r\nContent-Type: text/plain\r\n\r\nbody\r\n" +
+		"--x\r\nContent-Type: text/csv; name=\"report.csv\"\r\nContent-Disposition: attachment; filename=\"report.csv\"\r\n\r\na,b,c\r\n" +
+		"--x--\r\n"
+	message := saveOne(t, store, "build@mail.test", "sender@example.org", []byte(raw))
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+
+	apiResponse := httptest.NewRecorder()
+	handler.ServeHTTP(apiResponse, httptest.NewRequest(http.MethodGet, "/api/v1/messages/"+message.ID, nil))
+	if !strings.Contains(apiResponse.Body.String(), `"filename":"report.csv"`) {
+		t.Fatalf("expected attachments in message API response, got %q", apiResponse.Body.String())
+	}
+
+	uiResponse := httptest.NewRecorder()
+	handler.ServeHTTP(uiResponse, httptest.NewRequest(http.MethodGet, "/ui/messages/"+message.ID, nil))
+	if !strings.Contains(uiResponse.Body.String(), `"filename":"report.csv"`) {
+		t.Fatalf("expected attachments in UI message response, got %q", uiResponse.Body.String())
+	}
+
+	page := httptest.NewRecorder()
+	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/?inbox=build", nil))
+	if !strings.Contains(page.Body.String(), "report.csv") || !strings.Contains(page.Body.String(), "/api/v1/messages/"+message.ID+"/attachments/0") {
+		t.Fatalf("expected server-rendered inbox to link the attachment, got %q", page.Body.String())
 	}
 }
 
@@ -334,9 +385,7 @@ func TestContentSecurityPolicyAllowsUIAssets(t *testing.T) {
 
 func TestInboxAPIUsesPageResponse(t *testing.T) {
 	store := testStore(t, time.Hour)
-	if _, err := store.Save("build@mail.test", "sender@example.org", []byte("Subject: hello\r\n\r\nbody")); err != nil {
-		t.Fatal(err)
-	}
+	saveOne(t, store, "build@mail.test", "sender@example.org", []byte("Subject: hello\r\n\r\nbody"))
 	response := httptest.NewRecorder()
 	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/inboxes/build@mail.test?limit=25&offset=0", nil))
 
@@ -347,10 +396,7 @@ func TestInboxAPIUsesPageResponse(t *testing.T) {
 
 func TestMessageAPISeparatesHeadersAndBody(t *testing.T) {
 	store := testStore(t, time.Hour)
-	message, err := store.Save("build@mail.test", "sender@example.org", []byte("From: sender@example.org\r\nSubject: hello\r\n\r\nbody"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	message := saveOne(t, store, "build@mail.test", "sender@example.org", []byte("From: sender@example.org\r\nSubject: hello\r\n\r\nbody"))
 
 	response := httptest.NewRecorder()
 	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/messages/"+message.ID, nil))
@@ -372,10 +418,7 @@ func TestMessageAPISeparatesHeadersAndBody(t *testing.T) {
 
 func TestMessageResponsesDoNotAllowCaching(t *testing.T) {
 	store := testStore(t, time.Hour)
-	message, err := store.Save("build@mail.test", "sender@example.org", []byte("Content-Type: text/html\r\n\r\n<p>body</p>"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	message := saveOne(t, store, "build@mail.test", "sender@example.org", []byte("Content-Type: text/html\r\n\r\n<p>body</p>"))
 	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
 	for _, path := range []string{"/?inbox=build", "/api/v1/inboxes/build@mail.test", "/api/v1/messages/" + message.ID, "/ui/messages/" + message.ID, "/ui/messages/" + message.ID + "/html"} {
 		response := httptest.NewRecorder()
