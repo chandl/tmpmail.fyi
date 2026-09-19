@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -14,10 +15,18 @@ import (
 	"golang.org/x/net/html"
 )
 
+type Attachment struct {
+	Index       int    `json:"index"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"contentType"`
+	Size        int64  `json:"size"`
+}
+
 type parsedEmail struct {
-	Headers string
-	Text    string
-	HTML    string
+	Headers     string
+	Text        string
+	HTML        string
+	Attachments []Attachment
 }
 
 func parseEmail(raw string) parsedEmail {
@@ -27,58 +36,133 @@ func parseEmail(raw string) parsedEmail {
 	if err != nil {
 		return result
 	}
-	plain, htmlBody := parseMIMEPart(textproto.MIMEHeader(message.Header), message.Body)
-	if plain != "" {
-		result.Text = plain
+	parts := &mimeParts{}
+	index := 0
+	walkMIMEParts(textproto.MIMEHeader(message.Header), message.Body, &index, parts)
+	if parts.Plain != "" {
+		result.Text = parts.Plain
 	}
-	result.HTML = sanitizeHTML(htmlBody)
-	if plain == "" && result.HTML != "" {
+	result.HTML = sanitizeHTML(parts.HTML)
+	if parts.Plain == "" && result.HTML != "" {
 		result.Text = htmlText(result.HTML)
+	}
+	for _, part := range parts.Attachments {
+		result.Attachments = append(result.Attachments, part.Attachment)
 	}
 	return result
 }
 
-func parseMIMEPart(header textproto.MIMEHeader, body io.Reader) (string, string) {
+// AttachmentContent re-parses raw looking for the attachment at index (as
+// produced by parseEmail's Attachments list) and returns its decoded bytes.
+// Attachments are not persisted separately; they are re-extracted on demand
+// from the message's raw bytes, the same way the text/HTML body is.
+func AttachmentContent(raw string, index int) (Attachment, []byte, bool) {
+	message, err := mail.ReadMessage(strings.NewReader(raw))
+	if err != nil {
+		return Attachment{}, nil, false
+	}
+	parts := &mimeParts{}
+	i := 0
+	walkMIMEParts(textproto.MIMEHeader(message.Header), message.Body, &i, parts)
+	for _, part := range parts.Attachments {
+		if part.Index == index {
+			return part.Attachment, part.Content, true
+		}
+	}
+	return Attachment{}, nil, false
+}
+
+type attachmentPart struct {
+	Attachment
+	Content []byte
+}
+
+type mimeParts struct {
+	Plain       string
+	HTML        string
+	Attachments []attachmentPart
+}
+
+// walkMIMEParts recursively descends multipart bodies, keeping the first
+// text/plain and text/html parts as the message body and collecting every
+// other part as an attachment, in document order.
+func walkMIMEParts(header textproto.MIMEHeader, body io.Reader, index *int, parts *mimeParts) {
 	mediaType, params, err := mime.ParseMediaType(header.Get("Content-Type"))
 	if err != nil {
 		mediaType = "text/plain"
 	}
 	if strings.HasPrefix(mediaType, "multipart/") {
 		reader := multipart.NewReader(body, params["boundary"])
-		var plain, htmlBody string
 		for {
 			part, err := reader.NextPart()
 			if err == io.EOF {
-				break
+				return
 			}
 			if err != nil {
-				return plain, htmlBody
+				return
 			}
-			partPlain, partHTML := parseMIMEPart(part.Header, part)
-			if plain == "" {
-				plain = partPlain
+			walkMIMEParts(part.Header, part, index, parts)
+		}
+	}
+
+	filename, isAttachment := attachmentFilename(header, params)
+	isAttachment = isAttachment || (!strings.HasPrefix(mediaType, "text/") && mediaType != "")
+	if !isAttachment {
+		content, err := decodeTransfer(body, header.Get("Content-Transfer-Encoding"))
+		if err != nil {
+			return
+		}
+		switch strings.ToLower(mediaType) {
+		case "text/html":
+			if parts.HTML == "" {
+				parts.HTML = content
 			}
-			if htmlBody == "" {
-				htmlBody = partHTML
+		case "text/plain", "":
+			if parts.Plain == "" {
+				parts.Plain = content
 			}
 		}
-		return plain, htmlBody
+		return
 	}
-	content, err := decodeTransfer(body, header.Get("Content-Transfer-Encoding"))
+	data, err := decodeTransferBytes(body, header.Get("Content-Transfer-Encoding"))
 	if err != nil {
-		return "", ""
+		return
 	}
-	switch strings.ToLower(mediaType) {
-	case "text/html":
-		return "", content
-	case "text/plain", "":
-		return content, ""
-	default:
-		return "", ""
+	i := *index
+	*index++
+	if filename == "" {
+		filename = fmt.Sprintf("attachment-%d", i)
 	}
+	parts.Attachments = append(parts.Attachments, attachmentPart{
+		Attachment: Attachment{Index: i, Filename: filename, ContentType: mediaType, Size: int64(len(data))},
+		Content:    data,
+	})
 }
 
-func decodeTransfer(body io.Reader, encoding string) (string, error) {
+// attachmentFilename reports the part's filename (from Content-Disposition,
+// falling back to the Content-Type name parameter) and whether the part is
+// explicitly marked as an attachment.
+func attachmentFilename(header textproto.MIMEHeader, contentTypeParams map[string]string) (filename string, isAttachment bool) {
+	decoder := new(mime.WordDecoder)
+	decode := func(value string) string {
+		if decoded, err := decoder.DecodeHeader(value); err == nil && decoded != "" {
+			return decoded
+		}
+		return value
+	}
+	if dispositionType, dispositionParams, err := mime.ParseMediaType(header.Get("Content-Disposition")); err == nil {
+		isAttachment = strings.EqualFold(dispositionType, "attachment")
+		if name := dispositionParams["filename"]; name != "" {
+			return decode(name), true
+		}
+	}
+	if name := contentTypeParams["name"]; name != "" {
+		return decode(name), isAttachment
+	}
+	return "", isAttachment
+}
+
+func decodeTransferBytes(body io.Reader, encoding string) ([]byte, error) {
 	var reader io.Reader = body
 	switch strings.ToLower(strings.TrimSpace(encoding)) {
 	case "base64":
@@ -86,7 +170,11 @@ func decodeTransfer(body io.Reader, encoding string) (string, error) {
 	case "quoted-printable":
 		reader = quotedprintable.NewReader(body)
 	}
-	data, err := io.ReadAll(reader)
+	return io.ReadAll(reader)
+}
+
+func decodeTransfer(body io.Reader, encoding string) (string, error) {
+	data, err := decodeTransferBytes(body, encoding)
 	return string(data), err
 }
 

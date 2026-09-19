@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -19,6 +20,42 @@ func TestParseEmailPrefersPlainTextAndSanitizesHTML(t *testing.T) {
 	}
 	if strings.Contains(parsed.HTML, "javascript:") || strings.Contains(parsed.HTML, "onclick") || strings.Contains(parsed.HTML, "script") || strings.Contains(parsed.HTML, "src=") {
 		t.Fatalf("HTML was not sanitized: %q", parsed.HTML)
+	}
+}
+
+func TestParseEmailExtractsAttachmentsAndRoundTripsContent(t *testing.T) {
+	binary := "\x00\x01\x02\x03binary-content\xff"
+	encoded := base64.StdEncoding.EncodeToString([]byte(binary))
+	raw := "Content-Type: multipart/mixed; boundary=x\r\n\r\n" +
+		"--x\r\nContent-Type: text/plain\r\n\r\nPlain body\r\n" +
+		"--x\r\nContent-Type: application/octet-stream; name=\"data.bin\"\r\nContent-Disposition: attachment; filename=\"data.bin\"\r\nContent-Transfer-Encoding: base64\r\n\r\n" + encoded + "\r\n" +
+		"--x--\r\n"
+
+	parsed := parseEmail(raw)
+	if parsed.Text != "Plain body" {
+		t.Fatalf("expected plain body to remain the message text, got %q", parsed.Text)
+	}
+	if len(parsed.Attachments) != 1 {
+		t.Fatalf("expected one attachment, got %#v", parsed.Attachments)
+	}
+	attachment := parsed.Attachments[0]
+	if attachment.Filename != "data.bin" || attachment.ContentType != "application/octet-stream" || attachment.Size != int64(len(binary)) {
+		t.Fatalf("unexpected attachment metadata: %#v", attachment)
+	}
+
+	meta, content, ok := AttachmentContent(raw, attachment.Index)
+	if !ok {
+		t.Fatal("expected AttachmentContent to find the attachment")
+	}
+	if meta != attachment {
+		t.Fatalf("expected consistent attachment metadata, got %#v vs %#v", meta, attachment)
+	}
+	if string(content) != binary {
+		t.Fatalf("expected decoded attachment bytes to round-trip, got %q", content)
+	}
+
+	if _, _, ok := AttachmentContent(raw, attachment.Index+1); ok {
+		t.Fatal("expected an out-of-range attachment index to be reported as not found")
 	}
 }
 
