@@ -88,7 +88,7 @@ func NewHTTPServer(cfg Config, store *Store) http.Handler {
 		renderInbox(w, store, cfg.MailDomain, strings.TrimSpace(r.URL.Query().Get("inbox")), pageOffset(r.URL.Query().Get("offset")))
 	})
 	return requestLogger(
-		limitHTTPRequests(securityHeaders(mux), cfg.MaxHTTPRequests, cfg.MetricsEnabled),
+		rateLimitPerIP(limitHTTPRequests(securityHeaders(mux), cfg.MaxHTTPRequests, cfg.MetricsEnabled), cfg.HTTPRateLimitIPHeader),
 		cfg.MetricsEnabled,
 		cfg.HTTPAccessLogMode,
 		cfg.HTTPLogHeaders,

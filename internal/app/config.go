@@ -27,6 +27,7 @@ type Config struct {
 	MetricsEnabled          bool
 	HTTPAccessLogMode       string
 	HTTPLogHeaders          []string
+	HTTPRateLimitIPHeader   string
 }
 
 func LoadConfig() (Config, error) {
@@ -75,7 +76,14 @@ func LoadConfig() (Config, error) {
 	if accessLogMode != "all" && accessLogMode != "errors" && accessLogMode != "off" {
 		return Config{}, fmt.Errorf("HTTP_ACCESS_LOG_MODE must be all, errors, or off")
 	}
-	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), SMTPTLSCertFile: tlsCertFile, SMTPTLSKeyFile: tlsKeyFile, HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxSMTPConnectionsPerIP: maxSMTPConnectionsPerIP, MaxSMTPRecipients: int(maxSMTPRecipients), MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders}, nil
+	rateLimitIPHeader := strings.TrimSpace(os.Getenv("HTTP_RATE_LIMIT_IP_HEADER"))
+	if rateLimitIPHeader != "" {
+		if !validHeaderName(rateLimitIPHeader) {
+			return Config{}, fmt.Errorf("HTTP_RATE_LIMIT_IP_HEADER is not a valid HTTP header name")
+		}
+		rateLimitIPHeader = http.CanonicalHeaderKey(rateLimitIPHeader)
+	}
+	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), SMTPTLSCertFile: tlsCertFile, SMTPTLSKeyFile: tlsKeyFile, HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxSMTPConnectionsPerIP: maxSMTPConnectionsPerIP, MaxSMTPRecipients: int(maxSMTPRecipients), MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders, HTTPRateLimitIPHeader: rateLimitIPHeader}, nil
 }
 
 func parseHTTPLogHeaders(value string) ([]string, error) {
