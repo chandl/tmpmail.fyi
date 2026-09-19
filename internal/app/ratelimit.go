@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	rateLimitRPS   = 5
-	rateLimitBurst = 20
+	rateLimitRPS   = 10
+	rateLimitBurst = 50
 )
 
 // newRateLimiter builds a tollbooth limiter keyed on RemoteAddr only. Tollbooth's own
