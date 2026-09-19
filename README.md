@@ -63,11 +63,14 @@ HTTP_MAX_CONCURRENT_REQUESTS=512 # Set to 0 only to disable HTTP overload sheddi
 METRICS_ENABLED=false # Start the separate metrics listener when true.
 HTTP_ACCESS_LOG_MODE=errors # all, errors, or off; errors avoids hot-path log pressure.
 HTTP_LOG_HEADERS=User-Agent # Comma-separated request headers to include in HTTP logs.
+HTTP_RATE_LIMIT_IP_HEADER= # e.g. CF-Connecting-IP; see the rate-limit paragraph below.
 ```
 
 `MAX_MESSAGE_BYTES` defaults to 2 MiB and `MAX_STORAGE_BYTES` defaults to 20 GiB. The global storage cap is enforced on every save: expired messages are removed first, then the oldest messages are evicted when necessary. A cleanup job also runs at startup and every minute.
 
 SMTP allows at most 100 concurrent sessions globally, 10 sessions per source IP, and 5 recipients per message by default. Set `SMTP_MAX_CONNECTIONS_PER_IP=0` only when a trusted SMTP proxy makes every connection appear to originate from the same address. Raise `SMTP_MAX_RECIPIENTS` only for a known workload: each accepted recipient creates a separate stored message. Set the limits according to the host's measured capacity; rejected connections receive a transient `421 4.3.2` response when possible. Successful SMTP receives log the sender IP. HTTP applies an independent 512-request concurrency limit by default and responds with `503` plus `Retry-After` under pressure.
+
+HTTP also rate-limits each client to 5 requests/second (burst 20), responding `429` plus `Retry-After` beyond that. The client IP is `RemoteAddr` by default. Set `HTTP_RATE_LIMIT_IP_HEADER` (for example `CF-Connecting-IP`) only when a trusted reverse proxy sets/overwrites that header itself and the origin is not reachable except through that proxy (e.g. firewalled to the proxy's IP ranges) — otherwise a client can set the header directly and bypass or misattribute the limit.
 
 Set both `SMTP_TLS_CERT_FILE` and `SMTP_TLS_KEY_FILE` to enable SMTP `STARTTLS`; leave both unset to retain plaintext SMTP. At startup, tmpmail verifies the certificate/key pair and requires the certificate to cover `MAIL_DOMAIN`. It advertises `STARTTLS` only when the pair is valid, requires a fresh `EHLO` after the upgrade, and supports TLS 1.2 or newer. It checks the files before each new TLS handshake, adopts a complete valid replacement, and keeps serving the last valid pair if renewal files are incomplete or invalid.
 

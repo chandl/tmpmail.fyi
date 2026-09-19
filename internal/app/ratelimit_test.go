@@ -1,0 +1,80 @@
+package app
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestRateLimitPerIPRejectsBurstFromSameIP(t *testing.T) {
+	handler := rateLimitPerIP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), "")
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.RemoteAddr = "203.0.113.10:5555"
+
+	var last *httptest.ResponseRecorder
+	for i := 0; i < rateLimitBurst+1; i++ {
+		last = httptest.NewRecorder()
+		handler.ServeHTTP(last, request)
+	}
+	if last.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 after exceeding burst, got %d", last.Code)
+	}
+	if last.Header().Get("Retry-After") != "1" {
+		t.Fatalf("expected Retry-After header, got %q", last.Header().Get("Retry-After"))
+	}
+
+	other := httptest.NewRequest(http.MethodGet, "/", nil)
+	other.RemoteAddr = "203.0.113.20:5555"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, other)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("expected a different IP to be unaffected, got %d", response.Code)
+	}
+}
+
+func TestRateLimitPerIPUsesConfiguredHeader(t *testing.T) {
+	handler := rateLimitPerIP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), "CF-Connecting-IP")
+
+	requestFor := func(headerValue string) *http.Request {
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.RemoteAddr = "198.51.100.1:1" // shared proxy address for every client
+		if headerValue != "" {
+			request.Header.Set("CF-Connecting-IP", headerValue)
+		}
+		return request
+	}
+
+	var last *httptest.ResponseRecorder
+	for i := 0; i < rateLimitBurst+1; i++ {
+		last = httptest.NewRecorder()
+		handler.ServeHTTP(last, requestFor("203.0.113.30"))
+	}
+	if last.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected first client to be rate-limited, got %d", last.Code)
+	}
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, requestFor("203.0.113.31"))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("expected a different header value to be unaffected, got %d", response.Code)
+	}
+}
+
+func TestFirstHeaderValue(t *testing.T) {
+	cases := map[string]string{
+		"":                        "",
+		"203.0.113.1":             "203.0.113.1",
+		"203.0.113.1, 10.0.0.1":   "203.0.113.1",
+		"  203.0.113.1 ,10.0.0.1": "203.0.113.1",
+	}
+	for input, want := range cases {
+		if got := firstHeaderValue(input); got != want {
+			t.Fatalf("firstHeaderValue(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
