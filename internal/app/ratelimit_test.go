@@ -35,6 +35,29 @@ func TestRateLimitPerIPRejectsBurstFromSameIP(t *testing.T) {
 	}
 }
 
+func TestRateLimitPerIPAppliesAcrossRoutesNotPerPath(t *testing.T) {
+	handler := rateLimitPerIP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), "")
+
+	// Exhaust the burst on one path, then confirm a different path from the same IP is
+	// already limited too: the bucket must be keyed by IP alone, not (IP, path), otherwise
+	// routes with per-resource paths (e.g. /ui/messages/{id}) would each get a fresh bucket.
+	request := httptest.NewRequest(http.MethodGet, "/build-482", nil)
+	request.RemoteAddr = "203.0.113.40:5555"
+	for i := 0; i < rateLimitBurst; i++ {
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+	}
+
+	other := httptest.NewRequest(http.MethodGet, "/ui/messages/some-id", nil)
+	other.RemoteAddr = "203.0.113.40:5555"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, other)
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected the limit to apply across routes for the same IP, got %d", response.Code)
+	}
+}
+
 func TestRateLimitPerIPUsesConfiguredHeader(t *testing.T) {
 	handler := rateLimitPerIP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

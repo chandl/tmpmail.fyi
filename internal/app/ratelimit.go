@@ -21,7 +21,9 @@ const (
 func newRateLimiter() *limiter.Limiter {
 	limit := tollbooth.NewLimiter(rateLimitRPS, nil).
 		SetBurst(rateLimitBurst).
-		SetIPLookups([]string{"RemoteAddr"})
+		SetIPLookups([]string{"RemoteAddr"}).
+		SetIgnoreURL(true) // limit per IP across all routes; tollbooth otherwise keys by IP+path,
+		// which would give every distinct inbox/message-ID path its own fresh bucket.
 	limit.SetOnLimitReached(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "1")
 	})
