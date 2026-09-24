@@ -130,25 +130,25 @@ func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	if !strings.Contains(page, "build@mail.test") {
 		t.Fatalf("expected resolved inbox address, got %q", page)
 	}
-	if !strings.Contains(uiCSS, `.shell.inbox-shell{width:min(1180px,calc(100% - 32px))}`) || !strings.Contains(uiScript, "classList.add('inbox-shell')") {
-		t.Fatal("expected populated inboxes to use the wider desktop layout")
+	if !strings.Contains(page, `class="has-inbox"`) || !strings.Contains(page, `class="mailbox"`) || !strings.Contains(page, `role="listbox"`) || !strings.Contains(page, `aria-selected="true"`) {
+		t.Fatalf("expected populated inboxes to use the two-pane mailbox layout, got %q", page)
 	}
 	if !strings.Contains(page, "<title>tmpmail - build@mail.test</title>") {
 		t.Fatalf("expected inbox-specific page title, got %q", page)
 	}
-	if !strings.Contains(page, `/ui.js?v=2`) || !strings.Contains(page, `/ui.css?v=2`) {
-		t.Fatalf("expected cache-busted UI assets, got %q", page)
+	if !strings.Contains(page, `/ui.js?v=`+uiVersion) || !strings.Contains(page, "<style>/* tmpmail UI.") {
+		t.Fatalf("expected inlined CSS and cache-busted UI script, got %q", page)
 	}
-	if !strings.Contains(page, "Message headers") || !strings.Contains(page, `data-message-id="`) {
+	if !strings.Contains(page, "Show original headers") || !strings.Contains(page, `data-message-id="`) {
 		t.Fatalf("expected message metadata and loading targets, got %q", page)
 	}
 	if !strings.Contains(page, ">body</pre>") {
 		t.Fatalf("expected the initial render to contain the message body, got %q", page)
 	}
-	if !strings.Contains(page, "tmpmail:last-inbox") {
-		t.Fatalf("expected last inbox browser storage, got %q", page)
+	if !strings.Contains(uiScript, "tmpmail:last-inbox") {
+		t.Fatal("expected last inbox browser storage")
 	}
-	if !strings.Contains(page, "Copy address") || !strings.Contains(page, "randomInbox") {
+	if !strings.Contains(page, `data-copy="build@mail.test"`) || !strings.Contains(page, "data-new-address") || !strings.Contains(uiScript, "randomInbox") {
 		t.Fatalf("expected generated inbox and copy controls, got %q", page)
 	}
 	if !strings.Contains(page, "local-time") {
@@ -157,11 +157,11 @@ func TestInboxUIAppendsConfiguredDomain(t *testing.T) {
 	if !strings.Contains(page, "https://chandl.io/") || !strings.Contains(page, "https://github.com/chandl/tmpmail.fyi") {
 		t.Fatalf("expected footer links, got %q", page)
 	}
-	if !strings.Contains(page, "href=\"/privacy\"") {
+	if !strings.Contains(page, "href=\"/privacy\"") || !strings.Contains(page, `href="/openapi.json"`) {
 		t.Fatalf("expected privacy link, got %q", page)
 	}
-	if !strings.Contains(page, `<header class="top"><a class="brand" href="/">tmp<span>mail</span></a><span class="badge">disposable email</span></header>`) {
-		t.Fatalf("expected shared wordmark and disposable-email badge, got %q", page)
+	if !strings.Contains(page, `<a class="wordmark" href="/">tmpmail</a>`) || !strings.Contains(page, "Disposable email · deleted after 1 hour") {
+		t.Fatalf("expected shared wordmark and disposable-email note, got %q", page)
 	}
 	if !strings.Contains(page, strconv.Itoa(time.Now().Year())) {
 		t.Fatalf("expected current copyright year, got %q", page)
@@ -174,7 +174,7 @@ func TestPrivacyPageExplainsMessageHandling(t *testing.T) {
 	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/privacy", nil))
 
 	page := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(page, "disposable email") || !strings.Contains(page, "Privacy and message handling") || !strings.Contains(page, "automatically deleted after one hour by default") || !strings.Contains(page, "does not include advertising or analytics trackers") {
+	if response.Code != http.StatusOK || !strings.Contains(page, "Disposable email") || !strings.Contains(page, "Privacy and message handling") || !strings.Contains(page, "automatically deleted after one hour by default") || !strings.Contains(page, "does not include advertising or analytics trackers") {
 		t.Fatalf("expected privacy details page, got status=%d body=%q", response.Code, page)
 	}
 }
@@ -230,6 +230,9 @@ func TestInboxLoadsSelectedMessageOnDemand(t *testing.T) {
 	page := httptest.NewRecorder()
 	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/?inbox=build", nil))
+	if !strings.Contains(page.Body.String(), "data-email-dark-toggle") || !strings.Contains(uiCSS, "filter:invert(.93) hue-rotate(180deg)") {
+		t.Fatal("expected a dark preview toggle for HTML emails")
+	}
 	if !strings.Contains(page.Body.String(), `data-message-id="`+message.ID+`"`) || strings.Contains(page.Body.String(), "HTML body") {
 		t.Fatalf("expected page to contain only message metadata, got %q", page.Body.String())
 	}
@@ -242,7 +245,7 @@ func TestInboxLoadsSelectedMessageOnDemand(t *testing.T) {
 	script := httptest.NewRecorder()
 	handler.ServeHTTP(script, httptest.NewRequest(http.MethodGet, "/ui.js", nil))
 	contents := script.Body.String()
-	if !strings.Contains(contents, "fetch('/ui/messages/'") || !strings.Contains(contents, "View plain text") || !strings.Contains(contents, "allow-popups allow-popups-to-escape-sandbox") {
+	if !strings.Contains(contents, "fetch('/ui/messages/'") || !strings.Contains(contents, "show-plain") || !strings.Contains(contents, "allow-popups allow-popups-to-escape-sandbox") {
 		t.Fatalf("expected HTML-first reader with safe external navigation, got %q", contents)
 	}
 }
@@ -301,6 +304,9 @@ func TestMessageAndUIResponsesListAttachments(t *testing.T) {
 
 	page := httptest.NewRecorder()
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/?inbox=build", nil))
+	if !strings.Contains(page.Body.String(), "curl -sOJ &#39;{origin}/api/v1/messages/{id}/attachments/0&#39;") {
+		t.Fatalf("expected a copyable attachment download command, got %q", page.Body.String())
+	}
 	if !strings.Contains(page.Body.String(), "report.csv") || !strings.Contains(page.Body.String(), "/api/v1/messages/"+message.ID+"/attachments/0") {
 		t.Fatalf("expected server-rendered inbox to link the attachment, got %q", page.Body.String())
 	}
@@ -337,25 +343,31 @@ func TestServesMailClientUIAssets(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/ui.js", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "message-list") || !strings.Contains(response.Body.String(), "New random") || !strings.Contains(response.Body.String(), "Refresh") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "message-list") || !strings.Contains(response.Body.String(), "data-new-address") || !strings.Contains(response.Body.String(), "data-refresh") {
 		t.Fatalf("expected mail client UI script, got status=%d body=%q", response.Code, response.Body.String())
 	}
 }
 
-func TestInboxUIDefaultsToLightTheme(t *testing.T) {
+func TestInboxUIFollowsSystemThemeWithLightDefault(t *testing.T) {
 	store := testStore(t, time.Hour)
 	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
 
 	page := httptest.NewRecorder()
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/", nil))
-	if !strings.Contains(page.Body.String(), "body{margin:0;background:#f1f5f9;color:#1e293b") {
-		t.Fatalf("expected light page theme, got %q", page.Body.String())
+	body := page.Body.String()
+	if !strings.Contains(body, "--bg:#fafaf7") || !strings.Contains(body, "@media (prefers-color-scheme:dark)") || !strings.Contains(body, `localStorage.getItem("tmpmail:theme")`) {
+		t.Fatalf("expected light defaults, system dark theme, and a pre-paint theme script, got %q", body)
 	}
 
 	styles := httptest.NewRecorder()
-	handler.ServeHTTP(styles, httptest.NewRequest(http.MethodGet, "/ui.css", nil))
-	if !strings.Contains(styles.Body.String(), ".message-list{overflow:auto;padding:9px;border-right:1px solid #cbd5e1;background:#f8fafc}") {
-		t.Fatalf("expected light mailbox theme, got %q", styles.Body.String())
+	handler.ServeHTTP(styles, httptest.NewRequest(http.MethodGet, "/ui.css?v="+uiVersion, nil))
+	if styles.Body.String() != uiCSS || !strings.Contains(styles.Header().Get("Cache-Control"), "immutable") {
+		t.Fatalf("expected versioned stylesheet to be cacheable, got cache-control=%q", styles.Header().Get("Cache-Control"))
+	}
+	unversioned := httptest.NewRecorder()
+	handler.ServeHTTP(unversioned, httptest.NewRequest(http.MethodGet, "/ui.js", nil))
+	if unversioned.Header().Get("Cache-Control") != "no-cache" {
+		t.Fatalf("expected unversioned script to revalidate, got %q", unversioned.Header().Get("Cache-Control"))
 	}
 }
 
@@ -426,5 +438,95 @@ func TestMessageResponsesDoNotAllowCaching(t *testing.T) {
 		if response.Header().Get("Cache-Control") != "no-store, private" || response.Header().Get("Pragma") != "no-cache" {
 			t.Fatalf("expected no-store headers for %s, got %#v", path, response.Header())
 		}
+	}
+}
+
+func TestInboxUIPaginatesWithNewerAndOlderLinks(t *testing.T) {
+	store := testStore(t, time.Hour)
+	for i := 0; i < defaultPageSize+2; i++ {
+		saveOne(t, store, "busy@mail.test", "ci@example.org", []byte("From: CI Bot <ci@example.org>\r\nSubject: build\r\n\r\nok"))
+	}
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/?inbox=busy", nil))
+	page := first.Body.String()
+	if !strings.Contains(page, `href="/?inbox=busy&amp;offset=25"`) || strings.Contains(page, `rel="prev"`) || !strings.Contains(page, `aria-disabled="true">← Newer`) || !strings.Contains(page, "Page 1") || !strings.Contains(page, "Messages 1–25") {
+		t.Fatalf("expected an Older link and a disabled Newer button on the first page, got %q", page)
+	}
+	if !strings.Contains(page, `<span class="row-from" title="ci@example.org">CI Bot</span>`) {
+		t.Fatalf("expected sender display name in the message list, got %q", page)
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/?inbox=busy&offset=25", nil))
+	page = second.Body.String()
+	if !strings.Contains(page, `href="/?inbox=busy"`) || !strings.Contains(page, "← Newer") || strings.Contains(page, `rel="next"`) || !strings.Contains(page, `aria-disabled="true">Older →`) || !strings.Contains(page, "Page 2") || !strings.Contains(page, "Messages 26–27") {
+		t.Fatalf("expected a Newer link and a disabled Older button on the last page, got %q", page)
+	}
+}
+
+func TestEmptyInboxShowsStartCard(t *testing.T) {
+	store := testStore(t, time.Hour)
+	response := httptest.NewRecorder()
+	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/?inbox=quiet", nil))
+
+	page := response.Body.String()
+	for _, want := range []string{"Get a temporary email address", "No messages yet", `data-copy="quiet@mail.test"`, "New address", "Use with the API", "until curl -sf &#39;{origin}/api/v1/inboxes/{inbox}?limit=1&#39;"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("expected empty inbox page to contain %q, got %q", want, page)
+		}
+	}
+}
+
+func TestSenderFromHeaders(t *testing.T) {
+	for _, tc := range []struct{ headers, envelope, name, address string }{
+		{"From: \"Jamie from QA\" <jamie@qa.example>\r\nSubject: hi", "bounce@qa.example", "Jamie from QA", "jamie@qa.example"},
+		{"From: =?utf-8?q?Ren=C3=A9e?= <renee@example.org>", "x@example.org", "Renée", "renee@example.org"},
+		{"From: plain@example.org", "x@example.org", "", "plain@example.org"},
+		{"Subject: no from header", "envelope@example.org", "", "envelope@example.org"},
+	} {
+		name, address := senderFromHeaders(tc.headers, tc.envelope)
+		if name != tc.name || address != tc.address {
+			t.Errorf("senderFromHeaders(%q) = %q, %q; want %q, %q", tc.headers, name, address, tc.name, tc.address)
+		}
+	}
+}
+
+func TestBlockedImagesAreCountedAndMarked(t *testing.T) {
+	for _, tc := range []struct {
+		html  string
+		want  blockedImages
+		label string
+	}{
+		{`<p>no images</p>`, blockedImages{}, ""},
+		{`<img alt="logo" width="120"><img alt="hero">`, blockedImages{Total: 2}, "2 images blocked for privacy"},
+		{`<img width="1" height="1">`, blockedImages{Total: 1, TrackingPixels: 1}, "Tracking pixel blocked"},
+		{`<img alt="logo"><img width="1px" height="1px">`, blockedImages{Total: 2, TrackingPixels: 1}, "2 images blocked, incl. 1 tracking pixel"},
+	} {
+		got := countBlockedImages(sanitizeHTML(tc.html))
+		if got != tc.want || got.Label() != tc.label {
+			t.Errorf("countBlockedImages(%q) = %+v %q; want %+v %q", tc.html, got, got.Label(), tc.want, tc.label)
+		}
+	}
+
+	store := testStore(t, time.Hour)
+	message := saveOne(t, store, "build@mail.test", "sender@example.org", []byte("Content-Type: text/html\r\n\r\n<p>Hi</p><img src=\"https://tracker.example/p.gif\" width=\"1\" height=\"1\">"))
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+
+	frame := httptest.NewRecorder()
+	handler.ServeHTTP(frame, httptest.NewRequest(http.MethodGet, "/ui/messages/"+message.ID+"/html", nil))
+	if !strings.Contains(frame.Body.String(), blockedImageCSS) || strings.Contains(frame.Body.String(), "tracker.example") {
+		t.Fatalf("expected blocked image placeholders without remote sources, got %q", frame.Body.String())
+	}
+	details := httptest.NewRecorder()
+	handler.ServeHTTP(details, httptest.NewRequest(http.MethodGet, "/ui/messages/"+message.ID, nil))
+	if !strings.Contains(details.Body.String(), `"blockedImages":1,"trackingPixels":1`) {
+		t.Fatalf("expected blocked image counts, got %q", details.Body.String())
+	}
+	page := httptest.NewRecorder()
+	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/?inbox=build", nil))
+	if !strings.Contains(page.Body.String(), "Tracking pixel blocked") {
+		t.Fatalf("expected blocked image note in the reader, got %q", page.Body.String())
 	}
 }

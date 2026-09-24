@@ -1,152 +1,166 @@
 package app
 
-const uiCSS = `
-.shell.inbox-shell{width:min(1180px,calc(100% - 32px))}
-.random{background:#e2e8f0!important;color:#1e293b!important}.random:hover{background:#cbd5e1!important}.message-body-toolbar{display:flex;justify-content:flex-end;margin-top:10px}.html-toggle{background:#e2e8f0!important;color:#1e293b!important;padding:6px 10px!important;font-size:12px!important}.html-frame{width:100%;min-height:480px;margin-top:10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff}.html-frame[hidden],.plain-body[hidden]{display:none}.mailbox{display:grid;grid-template-columns:270px minmax(0,1fr);min-height:470px;margin:18px -22px -22px;border-top:1px solid #cbd5e1}.message-list{overflow:auto;padding:9px;border-right:1px solid #cbd5e1;background:#f8fafc}.message-item{display:block;width:100%;border:0;border-radius:9px;background:transparent;color:#334155;padding:11px;text-align:left;cursor:pointer}.message-item:hover{background:#e2e8f0}.message-item.active{background:#dbeafe;color:#172554}.message-item-subject{display:block;overflow:hidden;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.message-item-meta{display:block;margin-top:3px;color:#64748b;font-size:12px}.message-item-preview{display:-webkit-box;overflow:hidden;margin-top:5px;color:#64748b;font-size:12px;line-height:1.35;-webkit-box-orient:vertical;-webkit-line-clamp:2}.message-reader{min-width:0;background:#fff}.mailbox .message{display:none;border:0;margin:0;padding:22px}.mailbox .message.active{display:block}.mailbox .subject{font-size:20px;letter-spacing:-.02em}.mailbox .details{margin-top:8px;padding-bottom:16px;border-bottom:1px solid #cbd5e1}.mailbox .section-label{margin-top:20px}.mailbox .message pre{min-height:150px;background:#f8fafc}.mailbox details pre{min-height:auto}.pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:14px 0 0}.pagination a{border:1px solid #cbd5e1;border-radius:7px;color:#334155;padding:5px 9px;text-decoration:none;font-size:12px}.pagination a:hover{background:#f1f5f9}@media(max-width:700px){.mailbox{display:block;margin:18px -16px -16px}.message-list{max-height:220px;border-right:0;border-bottom:1px solid #cbd5e1}.mailbox .message{padding:16px}.mailbox .subject{font-size:18px}.html-frame{min-height:400px}}
-`
+import (
+	"crypto/sha256"
+	"embed"
+	"encoding/hex"
+	"html/template"
+	"net/http"
+	"net/mail"
+	"strconv"
+	"strings"
+	"time"
 
-const uiScript = `
-(() => {
-  const panel = document.querySelector('.panel');
-  const messages = [...document.querySelectorAll('.panel > .message')];
-  const form = document.getElementById('inbox-form');
-  const input = document.getElementById('inbox');
-  if (panel?.querySelector('.meta')) document.querySelector('.shell')?.classList.add('inbox-shell');
-  const makeRandomInbox = () => {
-    const adjectives = ['amber', 'brisk', 'calm', 'daring', 'fuzzy', 'golden', 'lucky', 'mellow', 'nimble', 'solar', 'swift', 'velvet'];
-    const nouns = ['badger', 'comet', 'falcon', 'fern', 'otter', 'panda', 'raven', 'river', 'tiger', 'willow', 'wren', 'zebra'];
-    const crypto = globalThis.crypto;
-    const pick = words => words[Math.floor(Math.random() * words.length)];
-    if (crypto?.getRandomValues) {
-      const bytes = new Uint32Array(2);
-      crypto.getRandomValues(bytes);
-      return pick(adjectives) + '-' + pick(nouns) + '-' + Array.from(bytes, value => value.toString(36)).join('');
-    }
-    return pick(adjectives) + '-' + pick(nouns) + '-' + Math.random().toString(36).slice(2, 12);
-  };
-  if (form && input) {
-    const random = document.createElement('button');
-    random.type = 'button';
-    random.className = 'random';
-    random.textContent = 'New random';
-    random.addEventListener('click', () => {
-      input.value = makeRandomInbox();
-      form.requestSubmit();
-    });
-    const refresh = document.createElement('button');
-    refresh.type = 'button';
-    refresh.className = 'random';
-    refresh.textContent = 'Refresh';
-    refresh.addEventListener('click', () => window.location.reload());
-    form.querySelector('.lookup')?.append(random, refresh);
-  }
-  if (!panel || messages.length === 0) return;
+	"golang.org/x/net/html"
+)
 
-  const mailbox = document.createElement('div');
-  mailbox.className = 'mailbox';
-  const list = document.createElement('aside');
-  list.className = 'message-list';
-  list.setAttribute('aria-label', 'Messages');
-  const reader = document.createElement('section');
-  reader.className = 'message-reader';
-  mailbox.append(list, reader);
+// The web UI is plain server-rendered HTML. Templates, CSS, and JS live in
+// assets/ui and are embedded in the binary; there is no frontend build step.
+//
+//go:embed assets/ui
+var uiAssets embed.FS
 
-  const select = (index) => {
-    buttons.forEach((button, i) => {
-      const active = i === index;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-selected', String(active));
-      messages[i].classList.toggle('active', active);
-    });
-    loadMessage(messages[index]);
-  };
-  const addHTMLReader = (message) => {
-    if (message.dataset.htmlPrepared === 'true') return;
-    message.dataset.htmlPrepared = 'true';
-    const plainBody = message.querySelector('.plain-body');
-    const toolbar = document.createElement('div');
-    toolbar.className = 'message-body-toolbar';
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'html-toggle';
-    toggle.textContent = 'View plain text';
-    const frame = document.createElement('iframe');
-    frame.className = 'html-frame';
-    frame.title = 'HTML email: ' + (message.querySelector('.subject')?.textContent || '(no subject)');
-    frame.src = '/ui/messages/' + encodeURIComponent(message.dataset.messageId) + '/html';
-    frame.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
-    if (plainBody) plainBody.hidden = true;
-    toggle.addEventListener('click', () => {
-      const showPlain = plainBody && plainBody.hidden;
-      if (plainBody) plainBody.hidden = !showPlain;
-      frame.hidden = showPlain;
-      toggle.textContent = showPlain ? 'View HTML' : 'View plain text';
-    });
-    toolbar.append(toggle);
-    message.querySelector('.details')?.after(toolbar, frame);
-  };
-  const loadMessage = (message) => {
-    if (!message || message.dataset.loaded === 'true' || message.dataset.loading === 'true') return;
-    message.dataset.loading = 'true';
-    const body = message.querySelector('.plain-body pre');
-    const headers = message.querySelector('details pre');
-    if (body) body.textContent = 'Loading message…';
-    fetch('/ui/messages/' + encodeURIComponent(message.dataset.messageId))
-      .then(response => response.ok ? response.json() : Promise.reject())
-      .then(page => {
-        if (body) body.textContent = page.text;
-        if (headers) headers.textContent = page.headers;
-        message.dataset.loaded = 'true';
-        if (page.hasHtml) addHTMLReader(message);
-      })
-      .catch(() => {
-        if (body) body.textContent = 'Message is no longer available.';
-      })
-      .finally(() => { delete message.dataset.loading; });
-  };
-  const buttons = messages.map((message, index) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'message-item';
-    const subject = message.querySelector('.subject')?.textContent || '(no subject)';
-    const details = message.querySelector('.details')?.textContent || '';
-    button.innerHTML = '<span class="message-item-subject"></span><span class="message-item-meta"></span><span class="message-item-preview"></span>';
-    button.querySelector('.message-item-subject').textContent = subject;
-    button.querySelector('.message-item-meta').textContent = details;
-    button.addEventListener('click', () => select(index));
-    list.append(button);
-    message.classList.add('email-view');
-    reader.append(message);
-    return button;
-  });
-  panel.append(mailbox);
-  select(0);
+var (
+	uiCSS     = mustReadUIAsset("ui.css")
+	uiScript  = mustReadUIAsset("ui.js")
+	uiVersion = assetVersion(uiCSS, uiScript)
 
-  const address = panel.querySelector('.meta > span')?.textContent;
-  const params = new URLSearchParams(window.location.search);
-  const offset = Math.max(0, Number(params.get('offset') || 0));
-  if (address && Number.isFinite(offset)) {
-    fetch('/api/v1/inboxes/' + encodeURIComponent(address) + '?limit=25&offset=' + offset)
-      .then(response => response.ok ? response.json() : null)
-      .then(page => {
-        if (!page) return;
-        if (!page.hasMore && offset === 0) return;
-        const navigation = document.createElement('nav');
-        navigation.className = 'pagination';
-        navigation.setAttribute('aria-label', 'Inbox pages');
-        const link = (label, nextOffset) => {
-          const next = new URLSearchParams(window.location.search);
-          next.set('offset', String(nextOffset));
-          const anchor = document.createElement('a');
-          anchor.href = '?' + next.toString();
-          anchor.textContent = label;
-          navigation.append(anchor);
-        };
-        if (offset > 0) link('Previous', Math.max(0, offset - 25));
-        if (page.hasMore) link('Next', offset + 25);
-        panel.insertBefore(navigation, mailbox);
-      })
-      .catch(() => {});
-  }
-})();
-`
+	uiTemplates = template.Must(template.New("ui").Funcs(template.FuncMap{
+		"rowData":      func(m inboxMessage, selected bool) messageView { return messageView{Message: m, Selected: selected} },
+		"emptyMessage": func() inboxMessage { return inboxMessage{} },
+		"snippet":      func(label, command string) snippet { return snippet{Label: label, Command: command} },
+	}).ParseFS(uiAssets, "assets/ui/*.html"))
+	inboxTemplate   = uiTemplates.Lookup("inbox")
+	privacyTemplate = uiTemplates.Lookup("privacy")
+)
+
+func mustReadUIAsset(name string) string {
+	content, err := uiAssets.ReadFile("assets/ui/" + name)
+	if err != nil {
+		panic(err)
+	}
+	return string(content)
+}
+
+func assetVersion(assets ...string) string {
+	hash := sha256.New()
+	for _, asset := range assets {
+		hash.Write([]byte(asset))
+	}
+	return hex.EncodeToString(hash.Sum(nil))[:12]
+}
+
+// serveUIAsset serves embedded CSS/JS. Requests carrying the current content
+// hash (?v=...) are immutable and cached for a year.
+func serveUIAsset(contentType, content string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", contentType)
+		if r.URL.Query().Get("v") == uiVersion {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+		_, _ = w.Write([]byte(content))
+	}
+}
+
+// pageChrome is shared by every server-rendered page.
+type pageChrome struct {
+	CSS          template.CSS
+	AssetVersion string
+	Year         int
+}
+
+func newPageChrome() pageChrome {
+	return pageChrome{CSS: template.CSS(uiCSS), AssetVersion: uiVersion, Year: time.Now().Year()}
+}
+
+// snippet is a copyable command; ui.js fills in {origin}, {inbox}, and {id}.
+type snippet struct {
+	Label   string
+	Command string
+}
+
+type messageView struct {
+	Message  inboxMessage
+	Selected bool
+}
+
+// senderFromHeaders returns the display name and address from the message's
+// From header, falling back to the envelope sender.
+func senderFromHeaders(headers, envelope string) (name, address string) {
+	address = envelope
+	parsed, err := mail.ReadMessage(strings.NewReader(headers + "\r\n\r\n"))
+	if err != nil {
+		return "", address
+	}
+	from, err := mail.ParseAddress(parsed.Header.Get("From"))
+	if err != nil {
+		return "", address
+	}
+	return strings.TrimSpace(from.Name), from.Address
+}
+
+// blockedImageCSS marks where an image would have been. Images are never
+// loaded (the message CSP sets img-src 'none'), so each <img> is drawn as a
+// striped placeholder showing its alt text.
+const blockedImageCSS = `img{display:inline-block;background:repeating-linear-gradient(135deg,#f4f4f1 0 6px,#ebebe7 6px 12px);outline:1px dashed #b9b9c0;outline-offset:-1px;color:#6c6c75;font-size:12px}`
+
+type blockedImages struct {
+	Total          int
+	TrackingPixels int
+}
+
+// countBlockedImages counts <img> elements in sanitized message HTML. Images
+// sized 2px or smaller are counted as tracking pixels.
+func countBlockedImages(sanitized string) blockedImages {
+	var result blockedImages
+	if sanitized == "" {
+		return result
+	}
+	doc, err := html.Parse(strings.NewReader(sanitized))
+	if err != nil {
+		return result
+	}
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.ElementNode && node.Data == "img" {
+			result.Total++
+			for _, attr := range node.Attr {
+				if key := strings.ToLower(attr.Key); key == "width" || key == "height" {
+					if size, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(attr.Val), "px")); err == nil && size <= 2 {
+						result.TrackingPixels++
+						break
+					}
+				}
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(doc)
+	return result
+}
+
+// Label is the short note shown above an HTML email; ui.js mirrors it.
+func (b blockedImages) Label() string {
+	plural := func(n int, word string) string {
+		if n == 1 {
+			return "1 " + word
+		}
+		return strconv.Itoa(n) + " " + word + "s"
+	}
+	switch {
+	case b.Total == 0:
+		return ""
+	case b.TrackingPixels == b.Total && b.Total == 1:
+		return "Tracking pixel blocked"
+	case b.TrackingPixels == b.Total:
+		return plural(b.Total, "tracking pixel") + " blocked"
+	case b.TrackingPixels == 0:
+		return plural(b.Total, "image") + " blocked for privacy"
+	default:
+		return plural(b.Total, "image") + " blocked, incl. " + plural(b.TrackingPixels, "tracking pixel")
+	}
+}

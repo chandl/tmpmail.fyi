@@ -1,0 +1,116 @@
+{{define "inbox"}}<!doctype html>
+<html lang="en"><head>
+{{template "head" .}}
+<title>tmpmail{{if .Address}} - {{.Address}}{{end}}</title>
+</head>
+<body{{if .Messages}} class="has-inbox"{{end}} data-address="{{.Address}}" data-offset="{{.Offset}}">
+{{template "header" .}}
+<main id="main" class="wrap">
+{{if .Messages}}{{template "mailbox" .}}{{else}}{{template "start" .}}{{end}}
+</main>
+{{template "footer" .}}
+</body></html>{{end}}
+
+{{define "address-form"}}<form id="inbox-form" action="/" method="get" novalidate>
+<label class="address-field {{if .Messages}}address-field-md{{else}}address-field-lg{{end}}"><span class="visually-hidden">Inbox name (the part before @{{.Domain}})</span>
+<input id="inbox" name="inbox" value="{{.InboxName}}" style="width:calc({{if .InboxName}}{{len .InboxName}}{{else}}15{{end}}ch + var(--field-pad))" placeholder="calm-otter-3f9k" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" data-domain="{{.Domain}}"><span class="address-domain" aria-hidden="true">@{{.Domain}}</span>
+</label>
+{{if .Messages}}<button class="btn btn-primary" type="button" data-copy="{{.Address}}">{{template "copy-label" "Copy"}}</button>{{end}}
+</form>{{end}}
+
+{{define "start"}}<section class="start" aria-labelledby="start-title">
+<h1 id="start-title">Get a temporary email address</h1>
+<p class="lede">Use it anywhere you need an email address. No sign-up; messages are deleted after 1 hour.</p>
+{{template "address-form" .}}
+<div class="address-actions">
+{{if .Address}}<button class="btn btn-primary" type="button" data-copy="{{.Address}}">{{template "copy-label" "Copy address"}}</button>{{end}}
+<button class="btn btn-secondary" type="button" data-new-address>New address</button>
+</div>
+{{if .Error}}<p class="notice" role="alert">{{.Error}}</p>{{end}}
+{{if .Address}}<p class="hint">Emails sent here will show up below <span data-refresh-mode>when you refresh</span>.</p>
+<div class="empty">
+{{if .Offset}}<p class="empty-title">No messages on this page</p>
+<p>They may have expired. <a href="/?inbox={{.InboxName}}">Go to the newest messages</a></p>
+{{else}}<p class="empty-title">{{template "live" ""}}No messages yet</p>
+<p>Send an email to <span class="address-inline">{{.Address}}</span> and it will appear here.</p>
+<div class="empty-actions">
+<button class="btn btn-secondary btn-sm" type="button" data-copy="{{.Address}}">{{template "copy-label" "Copy address"}}</button>
+<a class="btn btn-ghost btn-sm" href="/?inbox={{.InboxName}}" data-refresh>Refresh</a>
+</div>
+<details class="disclosure dev-tools"><summary>Use with the API</summary>
+{{template "snippet" (snippet "Wait for the first email (handy in CI)" "until curl -sf '{origin}/api/v1/inboxes/{inbox}?limit=1' | grep -q '\"id\"'; do sleep 2; done")}}
+{{template "snippet" (snippet "Every message in this inbox" "curl -s '{origin}/api/v1/inboxes/{inbox}'")}}
+<p class="snippet-note">Full reference: <a href="/openapi.json">OpenAPI spec</a></p>
+</details>{{end}}
+</div>{{end}}
+</section>{{end}}
+
+{{define "mailbox"}}<section class="toolbar" aria-label="Inbox address">
+<div class="toolbar-address">
+<span class="toolbar-label">Your temporary inbox</span>
+{{template "address-form" .}}
+</div>
+<div class="toolbar-actions">
+<span class="status-line"><span data-count>{{.CountLabel}}</span><span class="sep" aria-hidden="true" data-live hidden>·</span>{{template "live" "Live"}}</span>
+<a class="btn btn-secondary" href="/?inbox={{.InboxName}}{{if .Offset}}&amp;offset={{.Offset}}{{end}}" data-refresh title="Refresh (R)">Refresh</a>
+<button class="btn btn-secondary" type="button" data-new-address>New address</button>
+</div>
+</section>
+<div class="mailbox">
+<div class="list-pane">
+<div class="message-list" role="listbox" aria-label="Messages">
+{{range $i, $m := .Messages}}{{template "row" (rowData $m (eq $i 0))}}{{end}}
+</div>
+{{if or .Offset .HasMore}}<nav class="pagination" aria-label="Inbox pages">
+{{if .Offset}}<a class="btn btn-secondary btn-sm" href="/?inbox={{.InboxName}}{{if .NewerOffset}}&amp;offset={{.NewerOffset}}{{end}}" rel="prev">← Newer</a>{{else}}<span class="btn btn-secondary btn-sm is-disabled" aria-disabled="true">← Newer</span>{{end}}
+<span class="page-label" aria-current="page">Page {{.Page}}</span>
+{{if .HasMore}}<a class="btn btn-secondary btn-sm" href="/?inbox={{.InboxName}}&amp;offset={{.OlderOffset}}" rel="next" data-older>Older →</a>{{else}}<span class="btn btn-secondary btn-sm is-disabled" aria-disabled="true">Older →</span>{{end}}
+</nav>{{end}}
+</div>
+<div class="reader-pane" aria-label="Message">
+<button class="btn btn-ghost btn-sm back-button" type="button" data-back>← Back to inbox</button>
+{{range $i, $m := .Messages}}{{template "message" (rowData $m (eq $i 0))}}{{end}}
+</div>
+</div>
+<template id="row-template">{{template "row" (rowData emptyMessage false)}}</template>
+<template id="message-template">{{template "message" (rowData emptyMessage false)}}</template>{{end}}
+
+{{define "row"}}{{$m := .Message}}<a class="message-row" role="option" id="row-{{$m.ID}}" href="#m-{{$m.ID}}" data-id="{{$m.ID}}" aria-selected="{{.Selected}}" tabindex="{{if .Selected}}0{{else}}-1{{end}}">
+<span class="row-top"><span class="row-from" title="{{$m.FromAddress}}">{{$m.FromLabel}}</span><time class="row-time local-time" data-format="relative" datetime="{{$m.Received.Format "2006-01-02T15:04:05Z07:00"}}">{{$m.Received.Format "15:04 UTC"}}</time></span>
+<span class="row-subject">{{$m.SubjectLabel}}</span>
+<span class="row-expiry" data-expires="{{$m.ExpiresAt.Format "2006-01-02T15:04:05Z07:00"}}">Expires {{$m.ExpiresAt.Format "15:04 UTC"}}</span>
+</a>{{end}}
+
+{{define "message"}}{{$m := .Message}}<article class="message{{if .Selected}} is-active{{end}}{{if $m.HasHTML}} has-html{{end}}" id="m-{{$m.ID}}" data-message-id="{{$m.ID}}" aria-labelledby="subject-{{$m.ID}}">
+<header>
+<h2 class="message-subject" id="subject-{{$m.ID}}" tabindex="-1">{{$m.SubjectLabel}}</h2>
+<dl class="meta-grid">
+<dt>From</dt><dd class="meta-from">{{if $m.FromName}}{{$m.FromName}} <span class="addr">&lt;{{$m.FromAddress}}&gt;</span>{{else}}{{$m.FromAddress}}{{end}}</dd>
+<dt>To</dt><dd class="meta-to">{{$m.Recipient}}</dd>
+<dt>Received</dt><dd><time class="local-time" data-format="full" datetime="{{$m.Received.Format "2006-01-02T15:04:05Z07:00"}}">{{$m.Received.Format "02 Jan 2006, 15:04 UTC"}}</time> <span class="expiry">· <span data-expires="{{$m.ExpiresAt.Format "2006-01-02T15:04:05Z07:00"}}">Expires {{$m.ExpiresAt.Format "15:04 UTC"}}</span></span></dd>
+</dl>
+</header>
+<div class="body-toolbar"><div class="segmented" role="group" aria-label="Email format"><button type="button" aria-pressed="true" data-view="html">Formatted</button><button type="button" aria-pressed="false" data-view="plain">Plain text</button></div><div class="body-tools"><span class="blocked-images" data-blocked-images title="tmpmail never loads images in emails, so senders can't tell when a message is opened."{{if not $m.Images.Total}} hidden{{end}}>{{template "image-icon"}}<span data-blocked-label>{{$m.Images.Label}}</span></span><button class="btn btn-ghost btn-sm dark-preview" type="button" aria-pressed="true" data-email-dark-toggle title="Approximates dark mode by inverting the email's colors">{{template "moon"}}Dark preview</button></div></div>
+<div class="paper paper-frame" data-frame></div>
+<div class="plain-body"><div class="paper"><pre>{{$m.Body}}</pre></div></div>
+{{if $m.Attachments}}<section class="attachments" aria-label="Attachments"><h3>Attachments</h3><ul>{{range $m.Attachments}}<li><a href="/api/v1/messages/{{$m.ID}}/attachments/{{.Index}}" download>{{template "paperclip"}}<span>{{.Filename}}</span></a></li>{{end}}</ul></section>{{end}}
+<details class="disclosure headers"><summary>Show original headers</summary><pre>{{$m.Headers}}</pre></details>
+<details class="disclosure dev-tools"><summary>Use with the API</summary>
+{{template "snippet" (snippet "This message as JSON" "curl -s '{origin}/api/v1/messages/{id}'")}}
+{{template "snippet" (snippet "Every message in this inbox" "curl -s '{origin}/api/v1/inboxes/{inbox}'")}}
+{{if $m.Attachments}}{{template "snippet" (snippet "Download the first attachment" "curl -sOJ '{origin}/api/v1/messages/{id}/attachments/0'")}}{{end}}
+<p class="snippet-note">Full reference: <a href="/openapi.json">OpenAPI spec</a></p>
+</details>
+</article>{{end}}
+
+{{define "live"}}<span class="live" data-live hidden><button class="live-button" type="button" aria-label="{{if .}}{{.}}: c{{else}}C{{end}}heck for new mail now" aria-describedby="live-tip">{{template "live-dot"}}{{if .}}<span>{{.}}</span>{{end}}</button><span class="live-tip" id="live-tip" role="tooltip"><span data-live-every>Checks for new mail every 10 seconds.</span><br><span data-live-last>Click to check now.</span></span></span>{{end}}
+
+{{define "snippet"}}<div class="snippet"><div class="snippet-bar"><span class="snippet-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="snippet-title">{{.Label}}</span><button class="snippet-copy" type="button" data-copy="" data-copied="Command copied">{{template "copy-label" "Copy"}}</button></div><pre><span class="snippet-prompt" aria-hidden="true">$ </span><code data-cmd="{{.Command}}">{{.Command}}</code><span class="cursor" aria-hidden="true"></span></pre></div>{{end}}
+
+{{define "live-dot"}}<span class="live-dot" aria-hidden="true"><svg viewBox="0 0 16 16"><circle class="live-track" cx="8" cy="8" r="7"/><circle class="live-progress" cx="8" cy="8" r="7" pathLength="100"/></svg></span>{{end}}
+
+{{define "moon"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>{{end}}
+
+{{define "image-icon"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="m20.5 16-4.5-4.5-8.5 8"/><path d="M4 4 20 20"/></svg>{{end}}
+
+{{define "paperclip"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m20 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>{{end}}
