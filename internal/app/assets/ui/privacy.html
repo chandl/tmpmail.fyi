@@ -1,0 +1,32 @@
+{{define "privacy"}}<!doctype html>
+<html lang="en"><head>
+{{template "head" .}}
+<title>Privacy · tmpmail</title>
+</head>
+<body>
+{{template "header" .}}
+<main id="main" class="wrap">
+<article class="prose">
+<h1>Privacy and message handling</h1>
+<p class="lede">tmpmail is a disposable inbox service for development and testing. Do not use it for sensitive, personal, or production information.</p>
+<h2>What is stored</h2>
+<ul>
+<li>Messages sent to an inbox, including their contents, headers, sender, recipient, subject, and receive time.</li>
+<li>Message metadata in a local SQLite database and the original message file on the server’s local storage.</li>
+<li>The inbox name you last opened and your theme choice, in your browser’s local storage. They stay in your browser and are not sent as analytics data.</li>
+</ul>
+<h2>How messages are used</h2>
+<ul>
+<li>Messages are displayed to anyone who knows an inbox address. Inbox addresses are not protected by accounts or passwords.</li>
+<li>tmpmail does not send outbound email and does not load remote images when rendering HTML messages.</li>
+<li>The service logs operational events such as successful receives and HTTP requests, without logging message bodies.</li>
+</ul>
+<h2>Retention</h2>
+<p>Messages are automatically deleted after one hour by default. The operator can configure a different retention period or storage limits, which may remove messages sooner.</p>
+<h2>Third parties</h2>
+<p>tmpmail does not include advertising or analytics trackers. Deployments may still be subject to the hosting provider, reverse proxy, and network operator’s own logging and privacy practices.</p>
+<a class="back" href="/">← Back to inbox</a>
+</article>
+</main>
+{{template "footer" .}}
+</body></html>{{end}}

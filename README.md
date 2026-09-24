@@ -82,11 +82,11 @@ For a Docker certificate-manager sidecar, mount a dedicated `smtp-certs` volume 
 
 ## Inbox UI and message rendering
 
-Open the UI with an inbox local part, for example `/?inbox=build-482`. The UI appends `@MAIL_DOMAIN`; do not enter a domain in the inbox field. When no inbox is selected it creates a word-based random inbox name. The last selected inbox is retained in browser local storage.
+Open the UI with an inbox local part, for example `/?inbox=build-482`. The UI appends `@MAIL_DOMAIN`; the address field only edits the name (pasting a full address on the configured domain also works). When no inbox is selected it creates a word-based random inbox name. The last selected inbox and the light/dark theme choice are retained in browser local storage.
 
-The UI provides an inbox list, pagination, refresh, random-inbox, and copy-address controls. It displays browser-local timestamps and clearly separates message headers from the body.
+The UI is a two-pane mail reader (list first on small screens) with pagination, refresh, new-address, and copy-address controls. While the tab is visible it checks the first page for new mail every 10 seconds. It displays browser-local timestamps, keeps original headers behind a disclosure, and supports `↑`/`↓` (or `j`/`k`) to move between messages and `R` to refresh. Templates, CSS, and JS live in `internal/app/assets/ui` and are embedded in the binary; there is no frontend build step.
 
-Messages are stored unchanged as raw `.eml` files. For the reader, tmpmail parses MIME multipart messages and displays the HTML part by default when one is present, with a **View plain text** option. HTML is sanitized and rendered in a sandboxed iframe; links open in a new tab, while scripts, forms, and remote images remain blocked.
+Messages are stored unchanged as raw `.eml` files. For the reader, tmpmail parses MIME multipart messages and displays the HTML part by default when one is present, with a **Formatted / Plain text** toggle. HTML is sanitized and rendered in a sandboxed iframe; links open in a new tab, while scripts, forms, and remote images remain blocked. Blocked images are drawn as placeholders and counted above the message (1–2px images are flagged as tracking pixels). In the dark theme an optional **Dark preview** approximates dark mode by inverting the email's colors. Each message also offers copyable `curl` commands for the JSON API.
 
 ## Local development
 
