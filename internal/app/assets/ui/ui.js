@@ -388,8 +388,9 @@
     const countLabel = $('[data-count]');
     const updateCount = () => {
       if (!countLabel || offset !== 0) return;
+      // Mirrors messageCountLabel in http.go.
       const count = rows().length;
-      countLabel.textContent = $('[data-older]') ? 'Messages 1–' + count : count + (count === 1 ? ' message' : ' messages');
+      countLabel.textContent = $('[data-older]') ? count + '+ messages' : count + (count === 1 ? ' message' : ' messages');
     };
     const rowTemplate = $('#row-template');
     const messageTemplate = $('#message-template');

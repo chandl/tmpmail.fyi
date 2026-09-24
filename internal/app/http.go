@@ -410,14 +410,18 @@ func (m inboxMessage) SubjectLabel() string {
 	return m.Subject
 }
 
+// messageCountLabel counts every message up to and including this page;
+// "+" means older pages hold more.
 func messageCountLabel(count, offset int, hasMore bool) string {
-	if offset == 0 && !hasMore {
-		if count == 1 {
-			return "1 message"
-		}
-		return strconv.Itoa(count) + " messages"
+	total := offset + count
+	switch {
+	case hasMore:
+		return strconv.Itoa(total) + "+ messages"
+	case total == 1:
+		return "1 message"
+	default:
+		return strconv.Itoa(total) + " messages"
 	}
-	return "Messages " + strconv.Itoa(offset+1) + "–" + strconv.Itoa(offset+count)
 }
 
 func pageOffset(value string) int {

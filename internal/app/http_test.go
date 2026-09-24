@@ -451,7 +451,7 @@ func TestInboxUIPaginatesWithNewerAndOlderLinks(t *testing.T) {
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/?inbox=busy", nil))
 	page := first.Body.String()
-	if !strings.Contains(page, `href="/?inbox=busy&amp;offset=25"`) || strings.Contains(page, `rel="prev"`) || !strings.Contains(page, `aria-disabled="true">← Newer`) || !strings.Contains(page, "Page 1") || !strings.Contains(page, "Messages 1–25") {
+	if !strings.Contains(page, `href="/?inbox=busy&amp;offset=25"`) || strings.Contains(page, `rel="prev"`) || !strings.Contains(page, `aria-disabled="true">← Newer`) || !strings.Contains(page, "Page 1") || !strings.Contains(page, "25&#43; messages") {
 		t.Fatalf("expected an Older link and a disabled Newer button on the first page, got %q", page)
 	}
 	if !strings.Contains(page, `<span class="row-from" title="ci@example.org">CI Bot</span>`) {
@@ -461,7 +461,7 @@ func TestInboxUIPaginatesWithNewerAndOlderLinks(t *testing.T) {
 	second := httptest.NewRecorder()
 	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/?inbox=busy&offset=25", nil))
 	page = second.Body.String()
-	if !strings.Contains(page, `href="/?inbox=busy"`) || !strings.Contains(page, "← Newer") || strings.Contains(page, `rel="next"`) || !strings.Contains(page, `aria-disabled="true">Older →`) || !strings.Contains(page, "Page 2") || !strings.Contains(page, "Messages 26–27") {
+	if !strings.Contains(page, `href="/?inbox=busy"`) || !strings.Contains(page, "← Newer") || strings.Contains(page, `rel="next"`) || !strings.Contains(page, `aria-disabled="true">Older →`) || !strings.Contains(page, "Page 2") || !strings.Contains(page, "27 messages") || !strings.Contains(page, ">Paused<") {
 		t.Fatalf("expected a Newer link and a disabled Older button on the last page, got %q", page)
 	}
 }

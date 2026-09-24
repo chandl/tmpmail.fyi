@@ -51,7 +51,7 @@
 {{template "address-form" .}}
 </div>
 <div class="toolbar-actions">
-<span class="status-line"><span data-count>{{.CountLabel}}</span><span class="sep" aria-hidden="true" data-live hidden>·</span>{{template "live" "Live"}}</span>
+<span class="status-line"><span data-count>{{.CountLabel}}</span>{{if .Offset}}<span class="sep" aria-hidden="true">·</span>{{template "paused" .}}{{else}}<span class="sep" aria-hidden="true" data-live hidden>·</span>{{template "live" "Live"}}{{end}}</span>
 <a class="btn btn-secondary" href="/?inbox={{.InboxName}}{{if .Offset}}&amp;offset={{.Offset}}{{end}}" data-refresh title="Refresh (R)">Refresh</a>
 <button class="btn btn-secondary" type="button" data-new-address>New address</button>
 </div>
@@ -106,6 +106,8 @@
 {{define "live"}}<span class="live" data-live hidden><button class="live-button" type="button" aria-label="{{if .}}{{.}}: c{{else}}C{{end}}heck for new mail now" aria-describedby="live-tip">{{template "live-dot"}}{{if .}}<span>{{.}}</span>{{end}}</button><span class="live-tip" id="live-tip" role="tooltip"><span data-live-every>Checks for new mail every 10 seconds.</span><br><span data-live-last>Click to check now.</span></span></span>{{end}}
 
 {{define "snippet"}}<div class="snippet"><div class="snippet-bar"><span class="snippet-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="snippet-title">{{.Label}}</span><button class="snippet-copy" type="button" data-copy="" data-copied="Command copied">{{template "copy-label" "Copy"}}</button></div><pre><span class="snippet-prompt" aria-hidden="true">$ </span><code data-cmd="{{.Command}}">{{.Command}}</code><span class="cursor" aria-hidden="true"></span></pre></div>{{end}}
+
+{{define "paused"}}<span class="live is-paused"><a class="live-button" href="/?inbox={{.InboxName}}" aria-label="Paused: go to the newest messages to resume checking for new mail" aria-describedby="live-tip"><span class="live-dot" aria-hidden="true"></span><span>Paused</span></a><span class="live-tip" id="live-tip" role="tooltip">New mail is only checked on the newest page.<br>Click to go back and resume.</span></span>{{end}}
 
 {{define "live-dot"}}<span class="live-dot" aria-hidden="true"><svg viewBox="0 0 16 16"><circle class="live-track" cx="8" cy="8" r="7"/><circle class="live-progress" cx="8" cy="8" r="7" pathLength="100"/></svg></span>{{end}}
 
