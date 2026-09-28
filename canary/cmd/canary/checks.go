@@ -212,8 +212,13 @@ func verifyInboxUI(ctx context.Context, apiURL, recipient, body string) error {
 	if !strings.Contains(contents, body) {
 		return fmt.Errorf("inbox UI does not render probe message body")
 	}
-	if !strings.Contains(contents, "/ui.js?v=") || !strings.Contains(contents, "/ui.css?v=") {
-		return fmt.Errorf("inbox UI does not reference cache-busted assets")
+	if !strings.Contains(contents, "/ui.js?v=") {
+		return fmt.Errorf("inbox UI does not reference cache-busted script")
+	}
+	// Styles are either inlined into the page, which cannot go stale apart
+	// from it, or linked with a cache-busting version.
+	if !strings.Contains(contents, "<style>/* tmpmail UI.") && !strings.Contains(contents, "/ui.css?v=") {
+		return fmt.Errorf("inbox UI does not inline or reference cache-busted styles")
 	}
 	return nil
 }

@@ -35,6 +35,31 @@ func TestVerifyInboxUI(t *testing.T) {
 	}
 }
 
+func TestVerifyInboxUIAcceptsInlinedStyles(t *testing.T) {
+	body := "canary message inline-token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `<style>/* tmpmail UI. */</style><script src="/ui.js?v=2"></script><pre>%s</pre>`, body)
+	}))
+	defer server.Close()
+
+	if err := verifyInboxUI(context.Background(), server.URL, "canary-inline-token@mail.test", body); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVerifyInboxUIRejectsUnversionedStyles(t *testing.T) {
+	body := "canary message stale-token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `<link rel="stylesheet" href="/ui.css"><script src="/ui.js?v=2"></script><pre>%s</pre>`, body)
+	}))
+	defer server.Close()
+
+	err := verifyInboxUI(context.Background(), server.URL, "canary-stale-token@mail.test", body)
+	if err == nil || !strings.Contains(err.Error(), "cache-busted styles") {
+		t.Fatalf("error = %v, want missing styles", err)
+	}
+}
+
 func TestVerifyInboxUIRejectsEmptyBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`<link href="/ui.css?v=2"><script src="/ui.js?v=2"></script><pre></pre>`))

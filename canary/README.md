@@ -1,6 +1,6 @@
 # Canary
 
-`canary` is a small standalone Go service that continuously performs the tmpmail end-to-end contract: it sends a unique SMTP message, finds that exact message in the recipient inbox API, fetches it from the message API, and verifies recipient, sender, subject, and body. It then loads the browser inbox page and verifies that the probe body is rendered and the UI assets are cache-busted. It exposes JSON health on `GET /healthz`; it returns `200` when all checks pass and `503` when a check fails. `GET /livez` always returns `200` while the process is running.
+`canary` is a small standalone Go service that continuously performs the tmpmail end-to-end contract: it sends a unique SMTP message, finds that exact message in the recipient inbox API, fetches it from the message API, and verifies recipient, sender, subject, and body. It then loads the browser inbox page and verifies that the probe body is rendered, the UI script is cache-busted, and the styles are inlined or cache-busted. It exposes JSON health on `GET /healthz`; it returns `200` when all checks pass and `503` when a check fails. `GET /livez` always returns `200` while the process is running.
 
 ## Run
 
