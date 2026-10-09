@@ -306,8 +306,12 @@ func (s *Store) Save(recipients []string, sender string, raw []byte) (messages [
 		}
 		// Eviction and insertion must commit together: SMTP retries must never
 		// follow a failed Save that nevertheless inserted a readable message.
+		limitStarted := time.Now()
 		var limitErr error
 		stats, limitErr = s.evictTx(tx, blobID, size)
+		if s.cfg.MetricsEnabled {
+			storageSaveStageDuration.WithLabelValues("storage_limit", metricResult(limitErr)).Observe(time.Since(limitStarted).Seconds())
+		}
 		return limitErr
 	})
 	if s.cfg.MetricsEnabled {
@@ -410,7 +414,9 @@ func (s *Store) RunCleanup(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = s.Cleanup()
+			if err := s.Cleanup(); err != nil {
+				log.Printf("cleanup failed: %v", err)
+			}
 		}
 	}
 }
@@ -741,6 +747,7 @@ func (s *Store) discardFileLocked(path string, size int64) {
 	}
 	if err := s.loadStorageUsage(); err != nil {
 		log.Printf("reload discarded storage usage: %v", err)
+		s.storageFault = err
 		return
 	}
 	if err := s.drainPendingLocked(); err != nil {

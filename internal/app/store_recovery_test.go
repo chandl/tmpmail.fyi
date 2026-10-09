@@ -355,3 +355,53 @@ func TestPendingRetriesAreBoundedWithoutStarvingLaterFiles(t *testing.T) {
 		t.Fatalf("retry accounting: attempts=%d bytes=%d", attempts, s.storedBytes)
 	}
 }
+
+func TestUnrecordableOrphanBlocksAdmissionUntilReconciliation(t *testing.T) {
+	dir := t.TempDir()
+	dbPath, msgDir := filepath.Join(dir, "mail.db"), filepath.Join(dir, "messages")
+	cfg := Config{MessageTTL: time.Hour, MaxMessageBytes: 1024, MaxStorageBytes: 1024}
+	s, err := OpenStore(dbPath, msgDir, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	raw := []byte("Subject: orphan failure\r\n\r\nbody")
+	saveOne(t, s, "existing@mail.test", "sender", raw)
+	for _, statement := range []string{
+		`CREATE TRIGGER reject_insert BEFORE INSERT ON blobs BEGIN SELECT RAISE(ABORT, 'injected save failure'); END`,
+		`CREATE TRIGGER reject_pending BEFORE INSERT ON pending_deletions BEGIN SELECT RAISE(ABORT, 'injected recovery failure'); END`,
+	} {
+		if _, err := s.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.removeFile = func(string) error { return errors.New("injected unlink failure") }
+	if _, err := s.Save([]string{"failed@mail.test"}, "sender", raw); err == nil {
+		t.Fatal("expected failed save")
+	}
+	if s.storageFault == nil || s.storedBytes != 2*int64(len(raw)) {
+		t.Fatalf("unrecorded orphan was not charged: fault=%v bytes=%d", s.storageFault, s.storedBytes)
+	}
+	for _, statement := range []string{"DROP TRIGGER reject_insert", "DROP TRIGGER reject_pending"} {
+		if _, err := s.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.removeFile = os.Remove
+	if _, err := s.Save([]string{"blocked@mail.test"}, "sender", raw); err == nil {
+		t.Fatal("admission resumed before orphan reconciliation")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = OpenStore(dbPath, msgDir, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.storageFault != nil || s.storedBytes != int64(len(raw)) {
+		t.Fatalf("restart did not reconcile: fault=%v bytes=%d", s.storageFault, s.storedBytes)
+	}
+	if _, err := s.Save([]string{"recovered@mail.test"}, "sender", raw); err != nil {
+		t.Fatalf("admission still blocked after reconciliation: %v", err)
+	}
+}
