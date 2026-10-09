@@ -160,8 +160,11 @@ func (s *SMTPServer) scheduleRejection(conn net.Conn, reason string) {
 	case s.rejects <- struct{}{}:
 		go func() {
 			defer func() { <-s.rejects }()
+			started := time.Now()
 			_ = conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
-			_, _ = io.WriteString(conn, "421 4.3.2 service temporarily overloaded\r\n")
+			if _, err := io.WriteString(conn, "421 4.3.2 service temporarily overloaded\r\n"); err == nil {
+				s.recordRejection(sourceAddress(conn.RemoteAddr()), "", "", "CONNECT", 421, started)
+			}
 			_ = conn.Close()
 		}()
 	default:
@@ -204,6 +207,20 @@ type smtpSession struct {
 	recipients []string
 }
 
+func (s *SMTPServer) recordRejection(ip, sender, recipient, stage string, code int, started time.Time) {
+	if s.analytics == nil {
+		return
+	}
+	_, domain, _ := strings.Cut(sender, "@")
+	s.analytics.Record(AnalyticsEvent{ID: uuid.NewString(), Kind: "smtpRejected", Timestamp: time.Now(), IP: ip, Sender: sender, SenderDomain: strings.ToLower(domain), Recipient: recipient, Route: stage, Status: code, DurationMS: float64(time.Since(started).Microseconds()) / 1000})
+}
+
+func (s *smtpSession) rejectData(code int, started time.Time) {
+	for _, recipient := range s.recipients {
+		s.server.recordRejection(s.sourceIP, s.sender, recipient, "DATA", code, started)
+	}
+}
+
 func (s *smtpSession) Reset() { s.sender, s.recipients = "", nil }
 
 func (s *smtpSession) Logout() error { return nil }
@@ -214,10 +231,12 @@ func (s *smtpSession) Mail(from string, _ *smtp.MailOptions) error {
 }
 
 func (s *smtpSession) Rcpt(to string, _ *smtp.RcptOptions) error {
+	started := time.Now()
 	if !s.server.accepts(to) {
 		if s.server.cfg.MetricsEnabled {
 			smtpRejections.WithLabelValues("recipient_domain").Inc()
 		}
+		s.server.recordRejection(s.sourceIP, s.sender, to, "RCPT TO", 550, started)
 		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "unknown recipient domain"}
 	}
 	if !containsRecipient(s.recipients, to) {
@@ -245,8 +264,10 @@ func (s *smtpSession) Data(r io.Reader) error {
 		}
 		observeDelivery(err)
 		if errors.Is(err, smtp.ErrDataTooLarge) {
+			s.rejectData(552, deliveryStarted)
 			return smtp.ErrDataTooLarge
 		}
+		s.rejectData(554, deliveryStarted)
 		return &smtp.SMTPError{Code: 554, EnhancedCode: smtp.EnhancedCode{5, 0, 0}, Message: "message read failed"}
 	}
 	messages, err := s.server.store.Save(s.recipients, s.sender, raw)
@@ -256,6 +277,7 @@ func (s *smtpSession) Data(r io.Reader) error {
 			smtpMessages.WithLabelValues("failed").Inc()
 		}
 		observeDelivery(err)
+		s.rejectData(451, deliveryStarted)
 		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "temporary storage failure"}
 	}
 	for _, message := range messages {

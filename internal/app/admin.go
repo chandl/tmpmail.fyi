@@ -167,7 +167,7 @@ func (s *adminServer) overview(w http.ResponseWriter, r *http.Request) {
 	}
 	var earliest sql.NullInt64
 	if err == nil {
-		err = db.QueryRowContext(ctx, `SELECT MIN(t) FROM (SELECT MIN(timestamp) t FROM deliveries UNION ALL SELECT MIN(timestamp) t FROM http_requests)`).Scan(&earliest)
+		err = db.QueryRowContext(ctx, `SELECT MIN(t) FROM (SELECT MIN(timestamp) t FROM deliveries UNION ALL SELECT MIN(timestamp) t FROM http_requests UNION ALL SELECT MIN(timestamp) t FROM smtp_rejections)`).Scan(&earliest)
 	}
 	if earliest.Valid {
 		t := time.UnixMilli(earliest.Int64)
@@ -245,6 +245,7 @@ func adminRank(ctx context.Context, db *sql.DB, table, column string, lo, hi int
 }
 
 const adminDeliverySelect = `SELECT id,'delivery' kind,timestamp,recipient,sender,sender_domain,ip,size,'' user_agent,'' route,'' method,250 status,0 duration_ms,'' message_id,0 polling FROM deliveries`
+const adminRejectionSelect = `SELECT id,'smtpRejected' kind,timestamp,recipient,sender,sender_domain,ip,0 size,'' user_agent,stage route,'SMTP' method,status,duration_ms,'' message_id,0 polling FROM smtp_rejections`
 const adminHTTPSelect = `SELECT id,'http' kind,timestamp,recipient,'' sender,'' sender_domain,ip,0 size,user_agent,route,method,status,duration_ms,message_id,polling FROM http_requests`
 
 func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +256,7 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	kind := q.Get("kind")
-	if kind != "" && kind != "delivery" && kind != "http" && kind != "httpPoll" && kind != "httpOther" {
+	if kind != "" && kind != "delivery" && kind != "http" && kind != "httpPoll" && kind != "httpOther" && kind != "smtpRejected" {
 		adminError(w, 400, "Invalid activity type")
 		return
 	}
@@ -294,9 +295,12 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 		adminError(w, 400, "Search is too long")
 		return
 	}
-	union := adminDeliverySelect + ` UNION ALL ` + adminHTTPSelect
+	union := adminDeliverySelect + ` UNION ALL ` + adminHTTPSelect + ` UNION ALL ` + adminRejectionSelect
 	if kind == "delivery" {
 		union = adminDeliverySelect
+	}
+	if kind == "smtpRejected" {
+		union = adminRejectionSelect
 	}
 	if kind == "http" || kind == "httpPoll" || kind == "httpOther" {
 		union = adminHTTPSelect
@@ -329,7 +333,7 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 				where += ` AND kind='http'`
 			}
 			if f.param == "senderDomain" {
-				where += ` AND kind='delivery'`
+				where += ` AND kind IN ('delivery','smtpRejected')`
 			}
 		}
 	}
@@ -343,7 +347,7 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 			where += ` AND ` + f.column + ` LIKE ? ESCAPE '\'`
 			args = append(args, "%"+strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(v)+"%")
 			if f.param == "sender" {
-				where += ` AND kind='delivery'`
+				where += ` AND kind IN ('delivery','smtpRejected')`
 			} else {
 				where += ` AND kind='http'`
 			}

@@ -4,7 +4,7 @@
   const params = new URLSearchParams(location.search);
   const activity = location.pathname === '/activity';
   const form = $('filters');
-  const kindLabels = {delivery:'SMTP Deliveries',http:'HTTP requests · all',httpOther:'HTTP · non-poll',httpPoll:'HTTP polls'};
+  const kindLabels = {smtpRejected:'SMTP rejections',delivery:'SMTP Deliveries',http:'HTTP requests · all',httpOther:'HTTP · non-poll',httpPoll:'HTTP polls'};
   const fieldKeys = ['recipient','sender','senderDomain','sourceIP','userAgent','status'];
   const filterKeys = ['kind','sort','search','callerIP',...fieldKeys];
   const REFRESH_MS = 5000;
@@ -214,7 +214,8 @@
   function eventMetadata(e) {
     const content=node('div',undefined,'event-metadata'), list=node('dl');
     const pairs=[['Timestamp',date(e.timestamp)],['Event ID',e.id],['Recipient',e.recipient || '—']];
-    if(e.kind==='delivery')pairs.push(['Envelope sender',e.sender || '(empty)'],['Sender domain',e.senderDomain || '(empty)'],['SMTP source IP',e.ip || 'Unknown'],['Size',bytes(e.size)],['SMTP result','250 · Accepted']);
+    if(e.kind==='smtpRejected')pairs.push(['Envelope sender',e.sender || '(empty)'],['Sender domain',e.senderDomain || '(empty)'],['SMTP source IP',e.ip || 'Unknown'],['Stage',e.route],['SMTP result',e.status],['Duration',Number(e.durationMs).toFixed(1)+' ms']);
+    else if(e.kind==='delivery')pairs.push(['Envelope sender',e.sender || '(empty)'],['Sender domain',e.senderDomain || '(empty)'],['SMTP source IP',e.ip || 'Unknown'],['Size',bytes(e.size)],['SMTP result','250 · Accepted']);
     else pairs.push(['HTTP caller IP',e.ip || 'Unknown'],['Request',e.method+' '+e.route],['Status',e.status],['Duration',Number(e.durationMs).toFixed(1)+' ms'],['Message ID',e.messageId || '—'],['Polling',e.polling?'Identified UI poll':'Not marked as polling'],['Raw user agent',e.userAgent || '(empty)']);
     for(const [label,value] of pairs) {const item=node('div');item.append(node('dt',label),node('dd',String(value)));list.append(item);}
     content.append(list);return content;
@@ -229,10 +230,10 @@
       const row=node('tr',undefined,'admin-event');row.dataset.eventId=e.id;
       const timeCell=node('td',undefined,'event-time'), time=node('time',shortDate(e.timestamp)+' '+eventClock(e.timestamp));
       time.dateTime=e.timestamp;time.title=date(e.timestamp);timeCell.append(time);
-      const kind=node('td',undefined,'event-kind');kind.append(node('span',e.kind==='delivery'?'Delivery':e.polling?'HTTP poll':'HTTP','admin-kind '+e.kind));
+      const kind=node('td',undefined,'event-kind');kind.append(node('span',e.kind==='smtpRejected'?'Rejected':e.kind==='delivery'?'Delivery':e.polling?'HTTP poll':'HTTP','admin-kind '+e.kind));
       const recipient=node('td',e.recipient || e.messageId || '—','event-recipient');recipient.title=e.recipient || e.messageId || '';
-      const detail=node('td',e.kind==='delivery'?(e.sender || '(empty sender)'):e.method+' '+e.route,'event-detail');detail.title=detail.textContent;
-      const source=node('td',undefined,'event-source'),ip=node('span',e.ip || 'Unknown');source.append(node('span',e.kind==='delivery'?'SMTP':'HTTP','source-label'),ip);source.title=(e.kind==='delivery'?'SMTP source IP: ':'HTTP caller IP: ')+(e.ip || 'Unknown');
+      const detail=node('td',e.kind==='smtpRejected'?e.route+' · '+(e.sender || '(empty sender)'):e.kind==='delivery'?(e.sender || '(empty sender)'):e.method+' '+e.route,'event-detail');detail.title=detail.textContent;
+      const source=node('td',undefined,'event-source'),ip=node('span',e.ip || 'Unknown');source.append(node('span',e.kind!=='http'?'SMTP':'HTTP','source-label'),ip);source.title=(e.kind!=='http'?'SMTP source IP: ':'HTTP caller IP: ')+(e.ip || 'Unknown');
       const result=node('td',undefined,'event-result');
       if(e.kind==='delivery') {result.append(node('span','250','event-status'),node('span',' · '+bytes(e.size),'result-duration'));result.title='SMTP 250 · Accepted recipient delivery · '+bytes(e.size);}
       else {result.append(node('span',e.status,'event-status'+(e.status>=400?' error':'')),node('span',' · '+Number(e.durationMs).toFixed(1)+' ms','result-duration'));}

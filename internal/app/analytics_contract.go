@@ -3,7 +3,7 @@ package app
 import "time"
 
 // AnalyticsEvent contains metadata only. Never add MIME content or arbitrary headers.
-// Kind is delivery or http; polling is an explicit, unverified UI marker.
+// Kind is delivery, smtpRejected or http; polling is an explicit, unverified UI marker.
 type AnalyticsEvent struct {
 	ID           string    `json:"id"`
 	Kind         string    `json:"kind"`

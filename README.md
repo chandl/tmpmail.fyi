@@ -136,7 +136,11 @@ below the main view. Activity uses compact table rows with expandable metadata.
 Its field filters distinguish exact inbox/domain/IP matches from sender/user-agent
 text matches and apply only when submitted; removable chips show active filters,
 and Clear all restores the default view. Response-code filtering covers HTTP statuses
-and SMTP accepted deliveries (250); SMTP rejections are not in this log. HTTP response
+and SMTP accepted deliveries (250). SMTP rejections recorded by the application
+include connection overload (421), invalid recipient domains (550), oversized DATA
+(552), read failures (554), and storage failures (451). DATA failures are recorded
+per accepted recipient; connection failures may have no sender or recipient.
+Protocol-parser rejections before application callbacks are not recorded. HTTP response
 times can be sorted fastest or slowest first. Live refresh preserves unapplied edits.
 
 Admin access has **no application authentication**. A separate port is only a

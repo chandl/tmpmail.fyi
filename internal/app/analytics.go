@@ -100,7 +100,7 @@ func (a *Analytics) Record(e AnalyticsEvent) {
 	if a == nil || !a.cfg.AnalyticsEnabled || a.closed.Load() {
 		return
 	}
-	if e.Kind != "delivery" && e.Kind != "http" {
+	if e.Kind != "delivery" && e.Kind != "http" && e.Kind != "smtpRejected" {
 		a.drop(1)
 		return
 	}
@@ -164,6 +164,8 @@ func (a *Analytics) open() bool {
 		db.SetMaxIdleConns(4)
 		for _, q := range []string{
 			`CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,recipient TEXT NOT NULL,sender TEXT NOT NULL,sender_domain TEXT NOT NULL,ip TEXT NOT NULL,size INTEGER NOT NULL)`,
+			`CREATE TABLE IF NOT EXISTS smtp_rejections (id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,recipient TEXT NOT NULL,sender TEXT NOT NULL,sender_domain TEXT NOT NULL,ip TEXT NOT NULL,status INTEGER NOT NULL,duration_ms REAL NOT NULL,stage TEXT NOT NULL)`,
+			`CREATE INDEX IF NOT EXISTS smtp_rejections_time ON smtp_rejections(timestamp DESC,id)`,
 			`CREATE TABLE IF NOT EXISTS http_requests (id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,recipient TEXT NOT NULL,ip TEXT NOT NULL,user_agent TEXT NOT NULL,route TEXT NOT NULL,method TEXT NOT NULL,status INTEGER NOT NULL,duration_ms REAL NOT NULL,message_id TEXT NOT NULL,polling INTEGER NOT NULL)`,
 			`CREATE INDEX IF NOT EXISTS deliveries_time ON deliveries(timestamp DESC,id)`,
 			`CREATE INDEX IF NOT EXISTS http_requests_time ON http_requests(timestamp DESC,id)`,
@@ -337,6 +339,8 @@ func (a *Analytics) writeBatch(db *sql.DB, events []AnalyticsEvent) error {
 		}
 		if e.Kind == "delivery" {
 			_, err = tx.Exec(`INSERT OR IGNORE INTO deliveries(id,timestamp,recipient,sender,sender_domain,ip,size) VALUES(?,?,?,?,?,?,?)`, e.ID, e.Timestamp.UnixMilli(), e.Recipient, e.Sender, e.SenderDomain, e.IP, e.Size)
+		} else if e.Kind == "smtpRejected" {
+			_, err = tx.Exec(`INSERT OR IGNORE INTO smtp_rejections(id,timestamp,recipient,sender,sender_domain,ip,status,duration_ms,stage) VALUES(?,?,?,?,?,?,?,?,?)`, e.ID, e.Timestamp.UnixMilli(), e.Recipient, e.Sender, e.SenderDomain, e.IP, e.Status, e.DurationMS, e.Route)
 		} else {
 			_, err = tx.Exec(`INSERT OR IGNORE INTO http_requests(id,timestamp,recipient,ip,user_agent,route,method,status,duration_ms,message_id,polling) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, e.ID, e.Timestamp.UnixMilli(), e.Recipient, e.IP, e.UserAgent, e.Route, e.Method, e.Status, e.DurationMS, e.MessageID, e.Polling)
 		}
@@ -368,7 +372,7 @@ func (a *Analytics) usage(db *sql.DB) (int64, error) {
 }
 func (a *Analytics) prune(db *sql.DB) error {
 	cutoff := time.Now().Add(-a.cfg.AnalyticsEventTTL).UnixMilli()
-	for _, table := range []string{"deliveries", "http_requests"} {
+	for _, table := range []string{"deliveries", "http_requests", "smtp_rejections"} {
 		if _, err := db.Exec("DELETE FROM "+table+" WHERE timestamp < ?", cutoff); err != nil {
 			return err
 		}
@@ -394,7 +398,7 @@ func (a *Analytics) maintain(db *sql.DB) error {
 			if err != nil {
 				return err
 			}
-			rows, err := tx.Query(`SELECT kind,id FROM (SELECT 'deliveries' kind,id,timestamp FROM deliveries UNION ALL SELECT 'http_requests',id,timestamp FROM http_requests) ORDER BY timestamp,id LIMIT 256`)
+			rows, err := tx.Query(`SELECT kind,id FROM (SELECT 'deliveries' kind,id,timestamp FROM deliveries UNION ALL SELECT 'http_requests',id,timestamp FROM http_requests UNION ALL SELECT 'smtp_rejections',id,timestamp FROM smtp_rejections) ORDER BY timestamp,id LIMIT 256`)
 			if err != nil {
 				tx.Rollback()
 				return err
@@ -444,7 +448,7 @@ func (a *Analytics) maintain(db *sql.DB) error {
 		}
 	}
 	var earliest sql.NullInt64
-	if err := db.QueryRow(`SELECT MIN(timestamp) FROM (SELECT MIN(timestamp) timestamp FROM deliveries UNION ALL SELECT MIN(timestamp) FROM http_requests)`).Scan(&earliest); err != nil {
+	if err := db.QueryRow(`SELECT MIN(timestamp) FROM (SELECT MIN(timestamp) timestamp FROM deliveries UNION ALL SELECT MIN(timestamp) FROM http_requests UNION ALL SELECT MIN(timestamp) FROM smtp_rejections)`).Scan(&earliest); err != nil {
 		return fmt.Errorf("analytics history: %w", err)
 	}
 	var first *time.Time
