@@ -82,6 +82,18 @@ func TestAdminOverviewCountsBucketsAndRanking(t *testing.T) {
 		if history.Deliveries != check.deliveries {
 			t.Fatalf("window %s: deliveries %d", check.window, history.Deliveries)
 		}
+		if check.window == "1h" {
+			if len(history.Buckets) != 60 || history.Buckets[1].Timestamp.Sub(history.Buckets[0].Timestamp) != time.Minute {
+				t.Fatalf("last-hour buckets must be one minute: %+v", history.Buckets)
+			}
+			var bucketDeliveries int64
+			for _, bucket := range history.Buckets {
+				bucketDeliveries += bucket.Deliveries
+			}
+			if bucketDeliveries != history.Deliveries {
+				t.Fatalf("last-hour bucket count: %d, total: %d", bucketDeliveries, history.Deliveries)
+			}
+		}
 	}
 	var d, requests, p int64
 	for _, b := range out.Buckets {

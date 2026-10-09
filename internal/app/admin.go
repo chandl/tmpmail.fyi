@@ -183,8 +183,11 @@ func (s *adminServer) overview(w http.ResponseWriter, r *http.Request) {
 		*q.dst, err = adminRank(ctx, db, q.table, q.column, lo, hi)
 	}
 	// All buckets share the same exact window, including empty intervals and the final partial interval.
-	const count = 24
-	width := (hi - lo + count - 1) / count
+	count := 24
+	if window == time.Hour {
+		count = 60
+	}
+	width := (hi - lo + int64(count) - 1) / int64(count)
 	for i := 0; i < count; i++ {
 		out.Buckets = append(out.Buckets, adminBucket{Timestamp: time.UnixMilli(lo + int64(i)*width)})
 	}
