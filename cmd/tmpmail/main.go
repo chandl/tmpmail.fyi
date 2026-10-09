@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,11 +19,9 @@ import (
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
-		conn, err := net.DialTimeout("tcp", "127.0.0.1:8080", 2*time.Second)
-		if err != nil {
+		if err := healthcheck(os.Getenv("HTTP_ADDR")); err != nil {
 			log.Fatal(err)
 		}
-		_ = conn.Close()
 		return
 	}
 	cfg, err := app.LoadConfig()
@@ -117,6 +116,49 @@ func main() {
 		log.Printf("SMTP shutdown: %v", err)
 	}
 	fmt.Println("bye")
+}
+
+func healthcheck(addr string) error {
+	target, err := healthcheckURL(addr)
+	if err != nil {
+		return err
+	}
+	// Probe the local listener directly, even when the container has proxy
+	// environment variables. A redirect is not a successful health response.
+	transport := &http.Transport{}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   2 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Get(target)
+	if err != nil {
+		return fmt.Errorf("HTTP healthcheck: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("HTTP healthcheck: got status %d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+	return nil
+}
+
+func healthcheckURL(addr string) (string, error) {
+	if addr == "" {
+		addr = ":8080"
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("healthcheck HTTP_ADDR: %w", err)
+	}
+	if host == "" || host == "0.0.0.0" {
+		host = "127.0.0.1"
+	} else if host == "::" {
+		host = "::1"
+	}
+	return (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: "/healthz"}).String(), nil
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {

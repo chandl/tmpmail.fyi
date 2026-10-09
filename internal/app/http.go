@@ -1,9 +1,11 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -29,7 +31,10 @@ func NewHTTPServer(cfg Config, store *Store, analytics ...*Analytics) http.Handl
 	mux.HandleFunc("GET /ui/messages/{id}", func(w http.ResponseWriter, r *http.Request) {
 		message, err := store.GetContext(r.Context(), r.PathValue("id"))
 		if err != nil {
-			http.NotFound(w, r)
+			writeUIReadError(w, r, err)
+			return
+		}
+		if r.Context().Err() != nil {
 			return
 		}
 		parsed := parseEmail(message.Body)
@@ -47,7 +52,10 @@ func NewHTTPServer(cfg Config, store *Store, analytics ...*Analytics) http.Handl
 	mux.HandleFunc("GET /ui/messages/{id}/html", func(w http.ResponseWriter, r *http.Request) {
 		message, err := store.GetContext(r.Context(), r.PathValue("id"))
 		if err != nil {
-			http.NotFound(w, r)
+			writeUIReadError(w, r, err)
+			return
+		}
+		if r.Context().Err() != nil {
 			return
 		}
 		content := parseEmail(message.Body).HTML
@@ -75,7 +83,7 @@ func NewHTTPServer(cfg Config, store *Store, analytics ...*Analytics) http.Handl
 		http.Redirect(w, r, location.String(), http.StatusFound)
 	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		renderInbox(w, store, cfg.MailDomain, strings.TrimSpace(r.URL.Query().Get("inbox")), pageOffset(r.URL.Query().Get("offset")))
+		renderInbox(r.Context(), w, store, cfg.MailDomain, strings.TrimSpace(r.URL.Query().Get("inbox")), pageOffset(r.URL.Query().Get("offset")), r.URL.Query().Get("message"))
 	})
 	public := requestLogger(
 		rateLimitPerIP(limitHTTPRequests(securityHeaders(mux), cfg.MaxHTTPRequests, cfg.MetricsEnabled), cfg.HTTPRateLimitRPS, cfg.HTTPRateLimitBurst, cfg.HTTPRateLimitIPHeader),
@@ -319,7 +327,7 @@ func limitHTTPRequests(next http.Handler, limit int, metricsEnabled bool) http.H
 	})
 }
 
-func renderInbox(w http.ResponseWriter, store *Store, domain, inboxName string, offset int) {
+func renderInbox(ctx context.Context, w http.ResponseWriter, store *Store, domain, inboxName string, offset int, selectedID string) {
 	data := struct {
 		pageChrome
 		InboxName   string
@@ -333,6 +341,7 @@ func renderInbox(w http.ResponseWriter, store *Store, domain, inboxName string, 
 		Page        int
 		OlderOffset int
 		CountLabel  string
+		SelectedID  string
 	}{pageChrome: publicPageChrome(store.cfg.MessageTTL), InboxName: inboxName, Domain: domain}
 	if inboxName != "" {
 		if strings.ContainsAny(inboxName, "@/\\") {
@@ -342,28 +351,53 @@ func renderInbox(w http.ResponseWriter, store *Store, domain, inboxName string, 
 			return
 		}
 		data.Address = inboxName + "@" + domain
-		messages, hasMore, err := store.ListPage(data.Address, defaultPageSize, offset)
+		messages, hasMore, err := store.ListPageContext(ctx, data.Address, defaultPageSize, offset)
+		if ctx.Err() != nil {
+			return
+		}
 		if err != nil {
 			http.Error(w, "storage error", 500)
 			return
 		}
-		for _, message := range messages {
-			full, err := store.Get(message.ID)
-			if err != nil {
-				continue
+		if len(messages) > 0 {
+			data.SelectedID = messages[0].ID
+			for _, message := range messages {
+				if message.ID == selectedID {
+					data.SelectedID = selectedID
+					break
+				}
 			}
-			parsed := parseEmail(full.Body)
-			fromName, fromAddress := senderFromHeaders(parsed.Headers, message.From)
-			data.Messages = append(data.Messages, inboxMessage{
-				Message:     message,
-				Headers:     parsed.Headers,
-				Body:        parsed.Text,
-				HasHTML:     parsed.HTML != "",
-				Images:      countBlockedImages(parsed.HTML),
-				Attachments: parsed.Attachments,
-				FromName:    fromName,
-				FromAddress: fromAddress,
-			})
+		}
+		for _, message := range messages {
+			if ctx.Err() != nil {
+				return
+			}
+			fromName, fromAddress := senderFromHeaders("From: "+message.From, message.From)
+			query := url.Values{"inbox": {inboxName}, "message": {message.ID}}
+			if offset > 0 {
+				query.Set("offset", strconv.Itoa(offset))
+			}
+			openURL := (&url.URL{Path: "/", RawQuery: query.Encode(), Fragment: "m-" + message.ID}).String()
+			item := inboxMessage{Message: message, FromName: fromName, FromAddress: fromAddress, OpenURL: openURL}
+			// Only the initial selection needs a body. Summaries come from SQLite;
+			// other messages (including attachments) are parsed on selection.
+			if message.ID == data.SelectedID {
+				full, err := store.GetContext(ctx, message.ID)
+				if ctx.Err() != nil {
+					return
+				}
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					http.Error(w, "storage error", http.StatusInternalServerError)
+					return
+				}
+				if err == nil {
+					parsed := parseEmail(full.Body)
+					item.Headers, item.Body = parsed.Headers, parsed.Text
+					item.HasHTML, item.Images = parsed.HTML != "", countBlockedImages(parsed.HTML)
+					item.Attachments, item.Loaded = parsed.Attachments, true
+				}
+			}
+			data.Messages = append(data.Messages, item)
 		}
 		data.Offset = offset
 		data.HasMore = hasMore
@@ -373,12 +407,17 @@ func renderInbox(w http.ResponseWriter, store *Store, domain, inboxName string, 
 		data.OlderOffset = offset + defaultPageSize
 		data.CountLabel = messageCountLabel(len(data.Messages), offset, hasMore)
 	}
+	if ctx.Err() != nil {
+		return
+	}
 	setSensitiveResponseHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = inboxTemplate.Execute(w, data)
 }
 
 type inboxMessage struct {
+	Loaded  bool
+	OpenURL string
 	Message
 	Headers     string
 	Body        string
@@ -512,4 +551,17 @@ func serveAPISpec(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/vnd.oai.openapi+json;version=3.1")
 	_, _ = w.Write(specification)
+}
+
+// Expiry is a missing database row. Storage failures must remain retryable and
+// must not be shown to the reader as message expiry.
+func writeUIReadError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil {
+		return
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	http.Error(w, "storage error", http.StatusInternalServerError)
 }

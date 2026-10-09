@@ -58,10 +58,10 @@ var (
 		Namespace: "tmpmail", Name: "cleanup_messages_total", Help: "Messages removed by cleanup reason.",
 	}, []string{"reason"})
 	cleanupBytes = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "tmpmail", Name: "cleanup_bytes_total", Help: "Bytes reclaimed by cleanup reason.",
+		Namespace: "tmpmail", Name: "cleanup_bytes_total", Help: "Raw blob bytes released from message references by cleanup reason; physical reclamation may be pending.",
 	}, []string{"reason"})
 	storageBytes = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "tmpmail", Name: "storage_bytes", Help: "Bytes currently used by stored messages.",
+		Namespace: "tmpmail", Name: "storage_bytes", Help: "Raw message file bytes charged to storage, including pending deletions.",
 	})
 	storageMessages = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "tmpmail", Name: "storage_messages", Help: "Messages currently stored.",
@@ -119,6 +119,8 @@ func statusClass(status string) string {
 
 func metricRoute(path, pattern string) string {
 	switch {
+	case path == "/" || path == "/privacy" || path == "/healthz" || path == "/openapi.json" || path == "/ui.css" || path == "/ui.js" || path == "/metrics":
+		return path
 	case pattern == "GET /{inbox}":
 		return "/{inbox}"
 	case pattern == "" && strings.Count(strings.Trim(path, "/"), "/") == 0 && path != "/":

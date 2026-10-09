@@ -486,3 +486,26 @@ func TestStoreRuntimeCleanupErrorsWithoutMetrics(t *testing.T) {
 		t.Fatalf("cleanup errors absent without metrics: %+v", status)
 	}
 }
+
+func TestSMTPRecipientDomainNormalization(t *testing.T) {
+	store := testStore(t, time.Hour)
+	server := mustNewSMTPServer(t, Config{MailDomain: "MAIL.TEST"}, store)
+	session := &smtpSession{server: server}
+	for _, address := range []string{"Build@MAIL.TEST", "Build@mail.test", "build@Mail.Test"} {
+		if err := session.Rcpt(address, nil); err != nil {
+			t.Fatalf("accept %q: %v", address, err)
+		}
+	}
+	if len(session.recipients) != 2 || session.recipients[0] != "Build@mail.test" || session.recipients[1] != "build@mail.test" {
+		t.Fatalf("expected domain deduplication and distinct local-part case, got %v", session.recipients)
+	}
+	if err := session.Data(strings.NewReader("Subject: domain case\r\n\r\nhello")); err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range []string{"Build@mail.test", "build@mail.test"} {
+		messages, err := store.List(address)
+		if err != nil || len(messages) != 1 || messages[0].Recipient != address {
+			t.Fatalf("lookup %q: messages=%v err=%v", address, messages, err)
+		}
+	}
+}

@@ -97,3 +97,42 @@ func TestContentTypeFilenameMakesTextPartAnAttachment(t *testing.T) {
 		}
 	}
 }
+
+func TestParseEmailDecodesBodyCharset(t *testing.T) {
+	for _, tc := range []struct {
+		name, contentType, transfer, body, want string
+	}{
+		{"latin1 quoted printable", "text/plain; charset=iso-8859-1", "quoted-printable", "caf=E9", "café"},
+		{"windows1252 base64", "text/plain; charset=windows-1252", "base64", base64.StdEncoding.EncodeToString([]byte("\x93hello\x94")), "“hello”"},
+		{"latin1 html", "text/html; charset=ISO-8859-1", "quoted-printable", "<p>caf=E9</p>", "café"},
+		{"missing charset UTF8", "text/plain", "8bit", "café", "café"},
+		{"unknown charset UTF8", "text/plain; charset=unknown", "8bit", "café", "café"},
+		{"unknown charset invalid bytes", "text/plain; charset=unknown", "8bit", "caf\xe9", "caf\ufffd"},
+		{"invalid UTF8", "text/plain; charset=UTF-8", "8bit", "caf\xe9", "caf\ufffd"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := "Content-Type: " + tc.contentType + "\r\nContent-Transfer-Encoding: " + tc.transfer + "\r\n\r\n" + tc.body
+			parsed := parseEmail(raw)
+			if parsed.Text != tc.want {
+				t.Fatalf("text=%q, want %q", parsed.Text, tc.want)
+			}
+			if strings.HasPrefix(tc.contentType, "text/html") && parsed.HTML != "<p>café</p>" {
+				t.Fatalf("HTML=%q, want decoded body", parsed.HTML)
+			}
+		})
+	}
+}
+
+func TestParseMultipartConvertsBodiesButPreservesTextAttachments(t *testing.T) {
+	raw := "Content-Type: multipart/mixed; boundary=x\r\n\r\n" +
+		"--x\r\nContent-Type: text/plain; charset=iso-8859-1\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\ncaf=E9\r\n" +
+		"--x\r\nContent-Type: text/plain; charset=iso-8859-1\r\nContent-Disposition: attachment; filename=cafe.txt\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte("caf\xe9")) + "\r\n--x--\r\n"
+	parsed := parseEmail(raw)
+	if parsed.Text != "café" || len(parsed.Attachments) != 1 {
+		t.Fatalf("parsed=%#v, want decoded body and attachment", parsed)
+	}
+	meta, content, ok := AttachmentContent(raw, parsed.Attachments[0].Index)
+	if !ok || string(content) != "caf\xe9" || meta.Size != 4 {
+		t.Fatalf("text attachment was transcoded: metadata=%#v content=%q found=%t", meta, content, ok)
+	}
+}
