@@ -50,7 +50,7 @@
     const labels={recipient:'Inbox',senderDomain:'Sender domain',callerIP:'HTTP caller IP'};
     const filters=[];
     if(params.get('window')&&params.get('window')!=='24h')filters.push(['window',windows[params.get('window')] || params.get('window')]);
-    if(params.get('kind'))filters.push(['kind',params.get('kind')==='delivery'?'Deliveries':'HTTP requests']);
+    if(params.get('kind'))filters.push(['kind',params.get('kind')==='delivery'?'SMTP Deliveries':'HTTP requests']);
     if(params.get('search'))filters.push(['search','Search: '+params.get('search')]);
     for(const key of ['recipient','senderDomain','callerIP'])if(params.has(key))filters.push([key,labels[key]+': '+(params.get(key) || '(empty)')]);
     for(const [key,label] of filters) {
@@ -168,7 +168,7 @@
     const tooltip=$('chart-tooltip');tooltip.hidden=true;
     d.buckets.forEach((b,i)=>{
       const x=left+i*slot, end=i===d.buckets.length-1 ? d.generatedAt : d.buckets[i+1].timestamp;
-      const description=`${date(b.timestamp)} — ${clock(end)}: ${num(b.deliveries)} deliveries, ${num(b.http)} HTTP requests, ${num(b.polling)} polls`;
+      const description=`${date(b.timestamp)} — ${clock(end)}: ${num(b.deliveries)} SMTP Deliveries, ${num(b.http)} HTTP requests, ${num(b.polling)} polls`;
       const group=svgNode('g',{class:'chart-bin',tabindex:0,'data-bin':i,'aria-label':description});
       group.append(svgNode('title',{},description),svgNode('rect',{x,y:top,width:slot,height:plotHeight,class:'chart-hit'}));
       for(const [value,cls,position] of [[b.deliveries,'chart-delivery',0],[b.http,'chart-http',1]]) {
@@ -176,7 +176,7 @@
         group.append(svgNode('rect',{x:x+slot/2-barWidth-1+position*(barWidth+2),y:bottom-h,width:barWidth,height:h,rx:2,class:cls,'pointer-events':'none'}));
       }
       const show=()=>{
-        tooltip.replaceChildren(node('strong',`${shortDate(b.timestamp)} · ${clock(b.timestamp)}–${clock(end)}`),node('div',`${num(b.deliveries)} deliveries`),node('div',`${num(b.http)} HTTP · ${num(b.polling)} polls`));
+        tooltip.replaceChildren(node('strong',`${shortDate(b.timestamp)} · ${clock(b.timestamp)}–${clock(end)}`),node('div',`${num(b.deliveries)} SMTP Deliveries`),node('div',`${num(b.http)} HTTP · ${num(b.polling)} polls`));
         tooltip.hidden=false;
         const panel=target.parentElement;
         tooltip.style.left=Math.max(8,Math.min(panel.clientWidth-tooltip.offsetWidth-8,target.offsetLeft+x+slot/2-tooltip.offsetWidth/2))+'px';
@@ -192,7 +192,7 @@
     if(focusedBin!==null)target.querySelector(`[data-bin="${focusedBin}"]`)?.focus({preventScroll:true});
   }
   function overview(d) {
-    $('counts').replaceChildren(count('Deliveries',d.deliveries,'Per accepted recipient'),count('Recipients',d.recipients,'Distinct inboxes receiving mail'),count('HTTP requests',d.requests,`${num(d.polling)} polling · ${num(d.requests-d.polling)} other`),count('Caller IPs',d.callers,'Distinct HTTP caller IPs'));
+    $('counts').replaceChildren(count('SMTP Deliveries',d.deliveries,'Per accepted recipient'),count('Recipients',d.recipients,'Distinct inboxes receiving mail'),count('HTTP requests',d.requests,`${num(d.polling)} polling · ${num(d.requests-d.polling)} other`),count('Caller IPs',d.callers,'Distinct HTTP caller IPs'));
     $('counts').setAttribute('aria-busy','false');
     ranking('inboxes',d.inboxes,'recipient','delivery');ranking('senders',d.senderDomains,'senderDomain','delivery');ranking('callers',d.httpCallers,'callerIP','http');
     chartData=d;drawChart(d);
@@ -240,7 +240,7 @@
     hasMore=d.hasMore;$('previous').disabled=offset===0;$('next').disabled=!hasMore;
     const first=offset+(d.events.length?1:0),last=offset+d.events.length;
     $('page-label').textContent=`Events ${num(first)}–${num(last)}${offset>=d.offsetLimit?' · limit reached':''}`;
-    const type=params.get('kind')==='delivery'?'Deliveries':params.get('kind')==='http'?'HTTP requests':'All events';
+    const type=params.get('kind')==='delivery'?'SMTP Deliveries':params.get('kind')==='http'?'HTTP requests':'All events';
     const windowLabel={'1h':'Last hour','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'}[params.get('window')] || 'Last 24 hours';
     $('activity-summary').textContent=type+' · '+windowLabel+' · Latest first';
   }
