@@ -46,13 +46,15 @@ func main() {
 	defer stop()
 	go store.RunCleanup(ctx, time.Minute)
 
-	smtpServer, err := app.NewSMTPServer(cfg, store)
+	analytics := app.OpenAnalytics(cfg)
+	defer analytics.Close()
+	smtpServer, err := app.NewSMTPServer(cfg, store, analytics)
 	if err != nil {
 		log.Fatalf("configure SMTP server: %v", err)
 	}
-	httpServer := newHTTPServer(cfg.HTTPAddr, app.NewHTTPServer(cfg, store))
+	httpServer := newHTTPServer(cfg.HTTPAddr, app.NewHTTPServer(cfg, store, analytics))
 
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 	go func() { errCh <- smtpServer.ListenAndServe(ctx) }()
 	go func() {
 		log.Printf("HTTP listening on %s", cfg.HTTPAddr)
@@ -68,6 +70,19 @@ func main() {
 		go func() {
 			log.Printf("metrics listening on %s", cfg.MetricsAddr)
 			err := metricsServer.ListenAndServe()
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			errCh <- err
+		}()
+	}
+
+	var adminServer *http.Server
+	if cfg.AdminEnabled {
+		adminServer = newHTTPServer(cfg.AdminAddr, app.NewAdminServer(cfg, store, smtpServer, analytics))
+		go func() {
+			log.Printf("private admin listening on %s (no application authentication)", cfg.AdminAddr)
+			err := adminServer.ListenAndServe()
 			if errors.Is(err, http.ErrServerClosed) {
 				err = nil
 			}
@@ -91,6 +106,11 @@ func main() {
 	if metricsServer != nil {
 		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
 			log.Printf("metrics shutdown: %v", err)
+		}
+	}
+	if adminServer != nil {
+		if err := adminServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("admin shutdown: %v", err)
 		}
 	}
 	if err := smtpServer.Close(); err != nil {

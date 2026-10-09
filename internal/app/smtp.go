@@ -16,6 +16,7 @@ import (
 	"time"
 
 	smtp "github.com/emersion/go-smtp"
+	"github.com/google/uuid"
 )
 
 const (
@@ -27,17 +28,18 @@ const (
 )
 
 type SMTPServer struct {
-	cfg      Config
-	store    *Store
-	server   *smtp.Server
-	sessions chan struct{}
-	rejects  chan struct{}
-	sourceMu sync.Mutex
-	sources  map[string]int
-	tlsCert  *tlsCertificateReloader
+	analytics *Analytics
+	cfg       Config
+	store     *Store
+	server    *smtp.Server
+	sessions  chan struct{}
+	rejects   chan struct{}
+	sourceMu  sync.Mutex
+	sources   map[string]int
+	tlsCert   *tlsCertificateReloader
 }
 
-func NewSMTPServer(cfg Config, store *Store) (*SMTPServer, error) {
+func NewSMTPServer(cfg Config, store *Store, analytics ...*Analytics) (*SMTPServer, error) {
 	limit := cfg.MaxSMTPConnections
 	if limit == 0 {
 		limit = defaultMaxSMTPConnections
@@ -47,6 +49,9 @@ func NewSMTPServer(cfg Config, store *Store) (*SMTPServer, error) {
 		maxRecipients = defaultMaxSMTPRecipients
 	}
 	server := &SMTPServer{cfg: cfg, store: store, sessions: make(chan struct{}, limit), rejects: make(chan struct{}, maxConcurrentSMTPRejections), sources: make(map[string]int)}
+	if len(analytics) > 0 && analytics[0] != nil && analytics[0].Snapshot().Enabled {
+		server.analytics = analytics[0]
+	}
 	if cfg.SMTPTLSCertFile != "" {
 		reloader, err := newTLSCertificateReloader(cfg.SMTPTLSCertFile, cfg.SMTPTLSKeyFile, cfg.MailDomain, setSMTPTLSCertificateExpiry)
 		if err != nil {
@@ -254,6 +259,11 @@ func (s *smtpSession) Data(r io.Reader) error {
 		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "temporary storage failure"}
 	}
 	for _, message := range messages {
+		if s.server.analytics != nil {
+			sender := boundedEventString(s.sender, 320)
+			_, domain, _ := strings.Cut(sender, "@")
+			s.server.analytics.Record(AnalyticsEvent{ID: uuid.NewString(), Kind: "delivery", Timestamp: message.Received, Recipient: boundedEventString(message.Recipient, 320), Sender: sender, SenderDomain: boundedEventString(strings.ToLower(domain), 253), IP: boundedEventString(s.sourceIP, 64), Size: message.Size, MessageID: message.ID})
+		}
 		log.Printf("[smtp receive] id=%s recipient=%s sender=%s source_ip=%s bytes=%d", message.ID, message.Recipient, s.sender, s.sourceIP, message.Size)
 		if s.server.cfg.MetricsEnabled {
 			smtpMessages.WithLabelValues("accepted").Inc()
@@ -390,4 +400,27 @@ func (s *SMTPServer) tlsConfig() *tls.Config {
 		return nil
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: s.tlsCert.GetCertificate}
+}
+
+// SMTPRuntimeStatus reads live admission and certificate state independently of Prometheus.
+type SMTPRuntimeStatus struct {
+	ActiveConnections int        `json:"activeConnections"`
+	ConnectionLimit   int        `json:"connectionLimit"`
+	TLSEnabled        bool       `json:"tlsEnabled"`
+	TLSNotAfter       *time.Time `json:"tlsNotAfter,omitempty"`
+}
+
+func (s *SMTPServer) RuntimeStatus() SMTPRuntimeStatus {
+	status := SMTPRuntimeStatus{ActiveConnections: len(s.sessions), ConnectionLimit: cap(s.sessions), TLSEnabled: s.tlsCert != nil}
+	if s.tlsCert != nil {
+		// Use the same reload path as STARTTLS, retaining the last valid certificate.
+		cert, _ := s.tlsCert.GetCertificate(nil)
+		if cert != nil && len(cert.Certificate) > 0 {
+			if leaf, err := x509.ParseCertificate(cert.Certificate[0]); err == nil {
+				expiry := leaf.NotAfter.UTC()
+				status.TLSNotAfter = &expiry
+			}
+		}
+	}
+	return status
 }

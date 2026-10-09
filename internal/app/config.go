@@ -10,29 +10,51 @@ import (
 )
 
 type Config struct {
-	MailDomain              string
-	DataDir                 string
-	SMTPAddr                string
-	SMTPTLSCertFile         string
-	SMTPTLSKeyFile          string
-	HTTPAddr                string
-	MetricsAddr             string
-	MessageTTL              time.Duration
-	MaxMessageBytes         int64
-	MaxStorageBytes         int64
-	MaxSMTPConnections      int
-	MaxSMTPConnectionsPerIP int
-	MaxSMTPRecipients       int
-	MaxHTTPRequests         int
-	MetricsEnabled          bool
-	HTTPAccessLogMode       string
-	HTTPLogHeaders          []string
-	HTTPRateLimitRPS        float64
-	HTTPRateLimitBurst      int
-	HTTPRateLimitIPHeader   string
+	AdminEnabled             bool
+	AdminAddr                string
+	AnalyticsEnabled         bool
+	AnalyticsEventTTL        time.Duration
+	AnalyticsMaxStorageBytes int64
+	MailDomain               string
+	DataDir                  string
+	SMTPAddr                 string
+	SMTPTLSCertFile          string
+	SMTPTLSKeyFile           string
+	HTTPAddr                 string
+	MetricsAddr              string
+	MessageTTL               time.Duration
+	MaxMessageBytes          int64
+	MaxStorageBytes          int64
+	MaxSMTPConnections       int
+	MaxSMTPConnectionsPerIP  int
+	MaxSMTPRecipients        int
+	MaxHTTPRequests          int
+	MetricsEnabled           bool
+	HTTPAccessLogMode        string
+	HTTPLogHeaders           []string
+	HTTPRateLimitRPS         float64
+	HTTPRateLimitBurst       int
+	HTTPRateLimitIPHeader    string
 }
 
 func LoadConfig() (Config, error) {
+	adminEnabled, err := strconv.ParseBool(env("ADMIN_ENABLED", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("ADMIN_ENABLED must be a boolean")
+	}
+	analyticsEnabled, err := strconv.ParseBool(env("ANALYTICS_ENABLED", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("ANALYTICS_ENABLED must be a boolean")
+	}
+	analyticsTTL, err := time.ParseDuration(env("ANALYTICS_EVENT_TTL", "720h"))
+	if err != nil || analyticsTTL <= 0 || analyticsTTL > 30*24*time.Hour {
+		return Config{}, fmt.Errorf("ANALYTICS_EVENT_TTL must be a positive duration no greater than 720h")
+	}
+	analyticsStorage, err := positiveInt(env("ANALYTICS_MAX_STORAGE_BYTES", "1073741824"))
+	if err != nil {
+		return Config{}, fmt.Errorf("ANALYTICS_MAX_STORAGE_BYTES: %w", err)
+	}
+
 	ttl, err := time.ParseDuration(env("MESSAGE_TTL", "1h"))
 	if err != nil || ttl <= 0 {
 		return Config{}, fmt.Errorf("MESSAGE_TTL must be a positive duration")
@@ -93,7 +115,7 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("HTTP_RATE_LIMIT_BURST: %w", err)
 	}
-	return Config{MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), SMTPTLSCertFile: tlsCertFile, SMTPTLSKeyFile: tlsKeyFile, HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxSMTPConnectionsPerIP: maxSMTPConnectionsPerIP, MaxSMTPRecipients: int(maxSMTPRecipients), MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders, HTTPRateLimitRPS: rateLimitRPS, HTTPRateLimitBurst: int(rateLimitBurst), HTTPRateLimitIPHeader: rateLimitIPHeader}, nil
+	return Config{AdminEnabled: adminEnabled, AdminAddr: env("ADMIN_ADDR", "127.0.0.1:8081"), AnalyticsEnabled: analyticsEnabled, AnalyticsEventTTL: analyticsTTL, AnalyticsMaxStorageBytes: analyticsStorage, MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), SMTPTLSCertFile: tlsCertFile, SMTPTLSKeyFile: tlsKeyFile, HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxSMTPConnectionsPerIP: maxSMTPConnectionsPerIP, MaxSMTPRecipients: int(maxSMTPRecipients), MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders, HTTPRateLimitRPS: rateLimitRPS, HTTPRateLimitBurst: int(rateLimitBurst), HTTPRateLimitIPHeader: rateLimitIPHeader}, nil
 }
 
 func parseHTTPLogHeaders(value string) ([]string, error) {

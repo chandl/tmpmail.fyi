@@ -484,7 +484,7 @@
       inFlight = true;
       setRing('is-checking');
       try {
-        const response = await fetch('/api/v1/inboxes/' + encodeURIComponent(address) + '?limit=' + PAGE_SIZE + '&offset=0', { cache: 'no-store' });
+        const response = await fetch('/api/v1/inboxes/' + encodeURIComponent(address) + '?limit=' + PAGE_SIZE + '&offset=0', { cache: 'no-store', headers: manual ? {} : { 'X-Tmpmail-Poll': '1' } });
         if (response.status === 429 || response.status === 503) { delay = Math.min(delay * 2, 120000); return; }
         if (!response.ok) return;
         delay = POLL_MS;

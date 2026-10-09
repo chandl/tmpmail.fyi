@@ -397,3 +397,88 @@ func writeTestCertificate(t *testing.T, name string, serial int64) (string, stri
 	}
 	return certFile, keyFile
 }
+
+func TestSMTPRuntimeStatusWithoutMetrics(t *testing.T) {
+	server := mustNewSMTPServer(t, Config{MaxSMTPConnections: 3}, nil)
+	server.sessions <- struct{}{}
+	status := server.RuntimeStatus()
+	if status.ActiveConnections != 1 || status.ConnectionLimit != 3 || status.TLSEnabled || status.TLSNotAfter != nil {
+		t.Fatalf("runtime status: %+v", status)
+	}
+	certFile, keyFile := writeTestCertificate(t, "mail.test", 11)
+	tlsServer := mustNewSMTPServer(t, Config{MailDomain: "mail.test", SMTPTLSCertFile: certFile, SMTPTLSKeyFile: keyFile}, nil)
+	status = tlsServer.RuntimeStatus()
+	if !status.TLSEnabled || status.TLSNotAfter == nil || !status.TLSNotAfter.After(time.Now()) {
+		t.Fatalf("TLS runtime status: %+v", status)
+	}
+}
+
+func TestSMTPAnalyticsCountsRecipientsAndSurvivesMailExpiry(t *testing.T) {
+	store := testStore(t, time.Hour)
+	analytics := OpenAnalytics(Config{AnalyticsEnabled: true, DataDir: t.TempDir()})
+	defer analytics.Close()
+	server, err := NewSMTPServer(Config{MailDomain: "mail.test"}, store, analytics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &smtpSession{server: server, sourceIP: "192.0.2.9", sender: "envelope@example.org", recipients: []string{"one@mail.test", "two@mail.test", "three@mail.test"}}
+	if err := session.Data(strings.NewReader("From: claimed@elsewhere.test\r\nSubject: body must remain private\r\n\r\nsecret body")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var count int
+	for time.Now().Before(deadline) {
+		if err := analytics.DB().QueryRow("SELECT COUNT(*) FROM deliveries").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count == 3 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if count != 3 {
+		t.Fatalf("delivery events = %d, want 3", count)
+	}
+	var sender, domain, ip, id string
+	if err := analytics.DB().QueryRow("SELECT sender,sender_domain,ip,id FROM deliveries LIMIT 1").Scan(&sender, &domain, &ip, &id); err != nil {
+		t.Fatal(err)
+	}
+	if sender != "envelope@example.org" || domain != "example.org" || ip != "192.0.2.9" || len(id) != 36 {
+		t.Fatalf("delivery attribution: %q %q %q %q", sender, domain, ip, id)
+	}
+	if _, err := store.db.Exec("UPDATE messages SET expires_at=0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Status(); got.StoredMessages != 0 || got.StoredBytes != 0 || got.LastCleanup == nil {
+		t.Fatalf("storage status: %+v", got)
+	}
+	if err := analytics.DB().QueryRow("SELECT COUNT(*) FROM deliveries").Scan(&count); err != nil || count != 3 {
+		t.Fatalf("mail expiry deleted analytics: %d %v", count, err)
+	}
+	// Failed persistence cannot create accepted-delivery metadata.
+	session.recipients = nil
+	if err := session.Data(strings.NewReader("secret")); err == nil {
+		t.Fatal("expected storage failure")
+	}
+	time.Sleep(300 * time.Millisecond)
+	if err := analytics.DB().QueryRow("SELECT COUNT(*) FROM deliveries").Scan(&count); err != nil || count != 3 {
+		t.Fatalf("failed delivery recorded: %d %v", count, err)
+	}
+}
+
+func TestStoreRuntimeCleanupErrorsWithoutMetrics(t *testing.T) {
+	store := testStore(t, time.Hour)
+	if err := store.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Cleanup(); err == nil {
+		t.Fatal("expected cleanup failure with closed DB")
+	}
+	status := store.Status()
+	if status.CleanupErrors != 1 || status.LastCleanup == nil {
+		t.Fatalf("cleanup errors absent without metrics: %+v", status)
+	}
+}

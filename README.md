@@ -52,6 +52,11 @@ SMTP_ADDR=:25
 SMTP_TLS_CERT_FILE=/certs/fullchain.pem # Optional; set both TLS paths to enable SMTP STARTTLS.
 SMTP_TLS_KEY_FILE=/certs/privkey.pem
 HTTP_ADDR=:8080
+ADMIN_ENABLED=false
+ADMIN_ADDR=127.0.0.1:8081
+ANALYTICS_ENABLED=false
+ANALYTICS_EVENT_TTL=720h
+ANALYTICS_MAX_STORAGE_BYTES=1073741824
 METRICS_ADDR=127.0.0.1:9090
 MESSAGE_TTL=1h
 MAX_MESSAGE_BYTES=2097152
@@ -115,6 +120,49 @@ GET /api/v1/messages/{message-id}
 GET /openapi.json
 ```
 
+## Private admin dashboard
+
+Enable `ADMIN_ENABLED=true` for a separate admin UI/API on `127.0.0.1:8081`.
+Enable `ANALYTICS_ENABLED=true` to collect metadata in `DATA_DIR/analytics.db`,
+using its own SQLite WAL connection pool. The public listener and metrics listener
+keep their existing roles. The two admin pages are **Overview** and **Activity**:
+process/runtime, SMTP capacity and TLS, mail storage and cleanup, delivery/request
+counts, traffic buckets, rankings, and a filtered, paginated metadata log.
+
+Admin access has **no application authentication**. A separate port is only a
+network boundary: keep it private using loopback, a private network, or an SSH
+tunnel. For Docker, set `ADMIN_ADDR=:8081` inside the container and uncomment only
+`127.0.0.1:8081:8081` in Compose. Never publish it on all host interfaces or route
+it through the public proxy. Other containers on the same Docker network can reach
+that container listener, so use a trusted Compose network. On remote hosts, use
+`ssh -L 8081:127.0.0.1:8081 your-host` and open `http://127.0.0.1:8081` locally.
+
+Detailed events default to `ANALYTICS_EVENT_TTL=720h` (30 days); shorter positive
+retention is allowed, values above 30 days are rejected. Analytics history survives
+mail expiry. `ANALYTICS_MAX_STORAGE_BYTES` defaults to 1 GiB. Cleanup removes expired
+events and evicts the oldest retained events under storage pressure. This is an
+application storage budget, not an exact filesystem quota: SQLite indexes, free
+pages, checkpointing, WAL and temporary growth need disk headroom. Thirty days is
+a maximum, never guaranteed available history. Overview shows the configured TTL,
+earliest retained timestamp, early evictions, storage and ingestion status.
+
+Collection is best-effort through one bounded in-memory queue and a background
+batch writer. Queue overflow or bounded write retries drop events without rejecting
+mail or public requests. Restart/crash losses are possible and may be uncounted;
+there is no outbox, cross-database transaction, or historical rollup. Dropped-event
+and ingestion freshness indicators help identify incomplete or stale history.
+
+A delivery means one successfully persisted recipient: three accepted recipients
+produce three events. SMTP source IPs and HTTP caller IPs have separate meanings;
+IPs are callers, not verified users. Envelope senders and raw bounded user agents
+are unverified claims. Automatic inbox polls carry `X-Tmpmail-Poll: 1`; this
+identifiable but spoofable marker separates polling from other HTTP requests,
+which are not necessarily intentional user actions. HTTP attribution uses the same
+explicit trusted-proxy header policy as rate limiting. Analytics never stores MIME
+bodies, attachments, arbitrary headers or query strings. Admin traffic is excluded
+from product HTTP metrics and event collection. Keep the data volume persistent
+and protect analytics metadata as sensitive operational data.
+
 ## Metrics and logs
 
 Set `METRICS_ENABLED=true` to start a dedicated Prometheus listener at `METRICS_ADDR`, which defaults to `127.0.0.1:9090`. It serves only `GET /metrics`; `GET /metrics` on the public UI/API listener returns `404`.
@@ -164,7 +212,7 @@ tmpmail
   restart: unless-stopped
 ```
 
-The named volume holds both `mail.db` and raw `.eml` message files, so container recreation does not remove mail. Copy [`.env.example`](.env.example) to `.env` and edit it for the deployment; `.env` is ignored by Git. The Compose file accepts a missing `.env` for inspection, but tmpmail requires `MAIL_DOMAIN`, so create it before starting the service.
+The named volume holds `mail.db`, optional `analytics.db` (including its WAL), and raw `.eml` message files, so container recreation does not remove mail. Copy [`.env.example`](.env.example) to `.env` and edit it for the deployment; `.env` is ignored by Git. The Compose file accepts a missing `.env` for inspection, but tmpmail requires `MAIL_DOMAIN`, so create it before starting the service.
 
 ### HTTPS (optional)
 

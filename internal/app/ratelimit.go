@@ -49,7 +49,7 @@ func rateLimitPerIP(next http.Handler, rps float64, burst int, ipHeader string) 
 		return limited
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if ip := firstHeaderValue(r.Header.Get(ipHeader)); ip != "" {
+		if ip := resolvedClientIP(r, ipHeader); ip != "" {
 			clone := r.Clone(r.Context())
 			clone.RemoteAddr = net.JoinHostPort(ip, "0")
 			r = clone
@@ -63,4 +63,22 @@ func rateLimitPerIP(next http.Handler, rps float64, burst int, ipHeader string) 
 func firstHeaderValue(value string) string {
 	first, _, _ := strings.Cut(value, ",")
 	return strings.TrimSpace(first)
+}
+
+// resolvedClientIP shares the configured trusted-header policy with analytics.
+// Only a configured header containing a valid IP overrides the socket peer.
+func resolvedClientIP(r *http.Request, ipHeader string) string {
+	if ipHeader != "" {
+		if ip := net.ParseIP(firstHeaderValue(r.Header.Get(ipHeader))); ip != nil {
+			return ip.String()
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String()
+	}
+	return ""
 }

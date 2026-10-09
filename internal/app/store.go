@@ -30,12 +30,14 @@ type Message struct {
 }
 
 type Store struct {
-	db             *sql.DB
-	msgDir         string
-	cfg            Config
-	writeMu        sync.Mutex
-	storedBytes    int64
-	storedMessages int64
+	db                *sql.DB
+	msgDir            string
+	cfg               Config
+	writeMu           sync.Mutex
+	storedBytes       int64
+	storedMessages    int64
+	cleanupErrorCount uint64
+	lastCleanup       time.Time
 }
 
 type cleanupStats struct {
@@ -270,6 +272,10 @@ func (s *Store) Save(recipients []string, sender string, raw []byte) (messages [
 	if s.storedBytes > s.cfg.MaxStorageBytes {
 		limitStarted := time.Now()
 		stats, err = s.enforceLimitLocked(blobID)
+		s.lastCleanup = time.Now().UTC()
+		if err != nil {
+			s.cleanupErrorCount++
+		}
 		if s.cfg.MetricsEnabled {
 			storageSaveStageDuration.WithLabelValues("storage_limit", metricResult(err)).Observe(time.Since(limitStarted).Seconds())
 		}
@@ -377,6 +383,10 @@ func (s *Store) Cleanup() (err error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	stats, err := s.cleanupLocked(time.Now().Unix())
+	s.lastCleanup = time.Now().UTC()
+	if err != nil {
+		s.cleanupErrorCount++
+	}
 	if err == nil {
 		logCleanup(stats, s.cfg.MetricsEnabled)
 		if s.cfg.MetricsEnabled {
@@ -531,6 +541,7 @@ func logCleanup(stats cleanupStats, metricsEnabled bool) {
 
 func (s *Store) removeMessageFile(path string) {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		s.cleanupErrorCount++
 		log.Printf("remove message file %s: %v", path, err)
 		if s.cfg.MetricsEnabled {
 			storageErrors.WithLabelValues("remove_file").Inc()
@@ -561,4 +572,22 @@ func mailDetails(raw []byte, fallback string) (string, string) {
 		from = fallback
 	}
 	return subject, from
+}
+
+type StoreStatus struct {
+	StoredBytes    int64      `json:"storedBytes"`
+	StoredMessages int64      `json:"storedMessages"`
+	CleanupErrors  uint64     `json:"cleanupErrors"`
+	LastCleanup    *time.Time `json:"lastCleanup,omitempty"`
+}
+
+func (s *Store) Status() StoreStatus {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	status := StoreStatus{StoredBytes: s.storedBytes, StoredMessages: s.storedMessages, CleanupErrors: s.cleanupErrorCount}
+	if !s.lastCleanup.IsZero() {
+		last := s.lastCleanup
+		status.LastCleanup = &last
+	}
+	return status
 }
