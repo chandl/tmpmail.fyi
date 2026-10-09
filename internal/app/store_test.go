@@ -274,3 +274,76 @@ func TestListPageReturnsHasMore(t *testing.T) {
 		t.Fatalf("expected final single message, got len=%d hasMore=%t", len(second), hasMore)
 	}
 }
+
+func TestStorageTimestampTiesUseArrivalOrder(t *testing.T) {
+	store := testStore(t, time.Hour)
+	raw := []byte("Subject: tied\r\n\r\nbody")
+	older := saveOne(t, store, "build@mail.test", "sender@example.org", raw)
+	newer := saveOne(t, store, "build@mail.test", "sender@example.org", raw)
+	// Force equal timestamps and IDs whose lexical order opposes arrival order.
+	for i, message := range []Message{older, newer} {
+		id := []string{"zzzz", "aaaa"}[i]
+		if _, err := store.db.Exec("UPDATE messages SET id = ?, received_at = ? WHERE id = ?", id, newer.Received.Unix(), message.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := store.List("build@mail.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].ID != "aaaa" || list[1].ID != "zzzz" {
+		t.Fatalf("expected newest arrival first for timestamp ties, got %#v", list)
+	}
+	store.cfg.MaxStorageBytes = int64(len(raw))
+	store.writeMu.Lock()
+	stats, err := store.enforceLimitLocked("")
+	store.writeMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Evicted != 1 || stats.EvictedBytes != int64(len(raw)) {
+		t.Fatalf("unexpected eviction stats: %#v", stats)
+	}
+	if _, err := store.Get("zzzz"); err != sql.ErrNoRows {
+		t.Fatalf("expected older arrival to be evicted, got %v", err)
+	}
+	if got, err := store.Get("aaaa"); err != nil || got.Body != string(raw) {
+		t.Fatalf("expected newer arrival and blob to survive, got %#v, %v", got, err)
+	}
+}
+
+func TestSavePreservesIncomingBlobAtStorageLimit(t *testing.T) {
+	store := testStore(t, time.Hour)
+	raw := []byte("Subject: capped\r\n\r\nbody")
+	store.cfg.MaxStorageBytes = int64(len(raw))
+	older := saveOne(t, store, "build@mail.test", "sender@example.org", raw)
+	// Simulate a clock adjustment: the prior delivery appears newer by time.
+	if _, err := store.db.Exec("UPDATE messages SET received_at = ? WHERE id = ?", time.Now().Add(time.Minute).Unix(), older.ID); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := store.Save([]string{"first@mail.test", "second@mail.test"}, "sender@example.org", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("expected both recipients, got %#v", messages)
+	}
+	for _, message := range messages {
+		if got, err := store.Get(message.ID); err != nil || got.Body != string(raw) {
+			t.Fatalf("successful Save must retain each recipient and blob, got %#v, %v", got, err)
+		}
+	}
+	if _, err := store.Get(older.ID); err != sql.ErrNoRows {
+		t.Fatalf("expected prior delivery to be evicted, got %v", err)
+	}
+	if store.storedBytes != int64(len(raw)) || store.storedMessages != 2 {
+		t.Fatalf("unexpected usage: bytes=%d messages=%d", store.storedBytes, store.storedMessages)
+	}
+	entries, err := os.ReadDir(store.msgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected only the incoming blob file, got %v", entries)
+	}
+}

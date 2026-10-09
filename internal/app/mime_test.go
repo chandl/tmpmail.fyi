@@ -68,3 +68,32 @@ func TestParseHTMLEmailBuildsReadablePlainTextPreview(t *testing.T) {
 		t.Fatalf("preview contains HTML or CSS: %q", parsed.Text)
 	}
 }
+
+func TestContentTypeFilenameMakesTextPartAnAttachment(t *testing.T) {
+	for _, mediaType := range []string{"text/plain", "text/calendar"} {
+		for _, disposition := range []string{"", "Content-Disposition: inline\r\n"} {
+			t.Run(mediaType+"/"+disposition, func(t *testing.T) {
+				content := "BEGIN:VCALENDAR\r\nEND:VCALENDAR"
+				raw := "Content-Type: multipart/mixed; boundary=x\r\n\r\n" +
+					"--x\r\nContent-Type: " + mediaType + "; name=invite.ics\r\n" + disposition +
+					"Content-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(content)) + "\r\n" +
+					"--x\r\nContent-Type: text/plain\r\n\r\nPlain body\r\n--x--\r\n"
+				parsed := parseEmail(raw)
+				if parsed.Text != "Plain body" {
+					t.Fatalf("expected unnamed text part as body, got %q", parsed.Text)
+				}
+				if len(parsed.Attachments) != 1 {
+					t.Fatalf("expected named text attachment, got %#v", parsed.Attachments)
+				}
+				attachment := parsed.Attachments[0]
+				if attachment.Filename != "invite.ics" || attachment.ContentType != mediaType || attachment.Size != int64(len(content)) {
+					t.Fatalf("unexpected attachment metadata: %#v", attachment)
+				}
+				meta, data, ok := AttachmentContent(raw, attachment.Index)
+				if !ok || meta != attachment || string(data) != content {
+					t.Fatalf("attachment failed to round-trip: metadata=%#v content=%q found=%t", meta, data, ok)
+				}
+			})
+		}
+	}
+}

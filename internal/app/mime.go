@@ -141,7 +141,7 @@ func walkMIMEParts(header textproto.MIMEHeader, body io.Reader, index *int, part
 
 // attachmentFilename reports the part's filename (from Content-Disposition,
 // falling back to the Content-Type name parameter) and whether the part is
-// explicitly marked as an attachment.
+// marked as an attachment or has a filename in either header.
 func attachmentFilename(header textproto.MIMEHeader, contentTypeParams map[string]string) (filename string, isAttachment bool) {
 	decoder := new(mime.WordDecoder)
 	decode := func(value string) string {
@@ -157,7 +157,7 @@ func attachmentFilename(header textproto.MIMEHeader, contentTypeParams map[strin
 		}
 	}
 	if name := contentTypeParams["name"]; name != "" {
-		return decode(name), isAttachment
+		return decode(name), true
 	}
 	return "", isAttachment
 }

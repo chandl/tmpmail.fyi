@@ -269,7 +269,7 @@ func (s *Store) Save(recipients []string, sender string, raw []byte) (messages [
 	stats := cleanupStats{}
 	if s.storedBytes > s.cfg.MaxStorageBytes {
 		limitStarted := time.Now()
-		stats, err = s.enforceLimitLocked()
+		stats, err = s.enforceLimitLocked(blobID)
 		if s.cfg.MetricsEnabled {
 			storageSaveStageDuration.WithLabelValues("storage_limit", metricResult(err)).Observe(time.Since(limitStarted).Seconds())
 		}
@@ -302,7 +302,7 @@ func (s *Store) ListPageContext(ctx context.Context, recipient string, limit, of
 			s.observeDBStats()
 		}
 	}()
-	rows, err := s.db.QueryContext(ctx, `SELECT id, recipient, sender, subject, received_at, expires_at, size FROM messages WHERE recipient = ? AND expires_at > ? ORDER BY received_at DESC, id DESC LIMIT ? OFFSET ?`, recipient, time.Now().Unix(), limit+1, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, recipient, sender, subject, received_at, expires_at, size FROM messages WHERE recipient = ? AND expires_at > ? ORDER BY received_at DESC, rowid DESC LIMIT ? OFFSET ?`, recipient, time.Now().Unix(), limit+1, offset)
 	if err != nil {
 		return nil, false, err
 	}
@@ -407,16 +407,20 @@ func (s *Store) observeDBStats() {
 	storageDBInUseConnections.Set(float64(stats.InUse))
 }
 
-func (s *Store) enforceLimitLocked() (cleanupStats, error) {
+func (s *Store) enforceLimitLocked(protectedBlobID string) (cleanupStats, error) {
 	stats, err := s.cleanupLocked(time.Now().Unix())
 	if err != nil {
 		return cleanupStats{}, err
 	}
 	for s.storedBytes > s.cfg.MaxStorageBytes {
 		var id, blobID string
-		err := s.db.QueryRow("SELECT id, blob_id FROM messages ORDER BY received_at, id LIMIT 1").Scan(&id, &blobID)
+		// SQLite assigns increasing rowids to inserts while writeMu serializes
+		// deliveries. Use that arrival order for timestamp ties, not random IDs.
+		// Protect every recipient of the incoming blob even if the clock moved
+		// backwards: Save must retain the delivery before SMTP acknowledges it.
+		err := s.db.QueryRow("SELECT id, blob_id FROM messages WHERE blob_id != ? ORDER BY received_at, rowid LIMIT 1", protectedBlobID).Scan(&id, &blobID)
 		if err == sql.ErrNoRows {
-			return stats, nil
+			return stats, fmt.Errorf("cannot enforce storage limit without evicting incoming delivery")
 		}
 		if err != nil {
 			return cleanupStats{}, err
