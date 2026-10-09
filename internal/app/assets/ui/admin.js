@@ -34,8 +34,6 @@
   $('activity-time-heading').textContent='Time · '+zone;
   $('page-title').textContent = activity ? 'Activity' : 'Overview';
   $('overview').hidden = activity; $('activity').hidden = !activity;
-  $('system-metrics').hidden = activity;
-  $('service-status').hidden = !activity;
   document.querySelectorAll('.activity-filter').forEach(e => e.hidden = !activity);
   document.querySelector(`[data-page="${activity ? 'activity' : 'overview'}"]`).setAttribute('aria-current', 'page');
   function syncFilters() {
@@ -112,13 +110,6 @@
     $('history').textContent=historyText; $('history').title=first ? 'Earliest retained event: '+date(first)+'. Retention may end early under storage pressure.' : 'No retained events.';
     $('ingestion').textContent=ingestionText; $('ingestion').title='Dropped events since process start; crash losses may be uncounted.';
     $('activity-history').replaceChildren(node('span',historyText),node('span',ingestionText));
-    const strip=$('service-status');strip.replaceChildren();
-    for(const [label,value,warn] of [
-      ['Process','Running',false],['SMTP',`${num(smtp.activeConnections)} / ${num(smtp.connectionLimit)}`,false],
-      ['Mail',bytes(store.storedBytes),false],['TLS',smtp.tlsEnabled ? (smtp.tlsNotAfter ? 'Expires '+shortDate(smtp.tlsNotAfter) : 'Enabled') : 'Off',smtp.tlsEnabled && new Date(smtp.tlsNotAfter) < new Date()],
-      ['Cleanup',store.cleanupErrors ? num(store.cleanupErrors)+' errors' : 'OK',store.cleanupErrors>0],
-      ['Analytics',a.available ? 'Connected' : 'Unavailable',!a.available]
-    ]) {const item=node('div',undefined,'service-item'+(warn?' warning':''));if(label==='Process')item.append(node('i',undefined,'service-dot'));item.append(node('span',label),node('strong',value));strip.append(item);}
     if(!activity) {
       const cards=[
         ['Process','Running',false,[['Uptime',duration(s.uptimeSeconds)],['Heap',bytes(s.memoryBytes)],['Goroutines',num(s.goroutines)]]],
@@ -289,7 +280,7 @@
       if(version!==requestVersion)return;
       let warnings='';
       if(status.status==='fulfilled')warnings=health(status.value,data.status==='fulfilled'?data.value.earliest:null);
-      else {warnings='Service status unavailable; ingestion freshness is unknown.';empty($('service-status'),'Status unavailable');}
+      else {warnings='Service status unavailable; ingestion freshness is unknown.';if(activity)$('activity-history').replaceChildren(node('span','Ingestion freshness unavailable'));else empty($('system-metrics'),'Status unavailable');}
       if(data.status==='rejected')throw data.reason;
       activity?events(data.value):overview(data.value);
       lastSuccess=data.value.generatedAt;$('freshness').dataset.stale='false';freshness();notice(warnings);

@@ -24,13 +24,13 @@
 <div id="counts" class="admin-counts" aria-busy="true"><div class="admin-count"><span>SMTP Deliveries</span><strong>—</strong></div><div class="admin-count"><span>Recipients</span><strong>—</strong></div><div class="admin-count"><span>HTTP requests</span><strong>—</strong></div><div class="admin-count"><span>Caller IPs</span><strong>—</strong></div></div>
 <section class="admin-panel traffic-panel"><div class="panel-heading"><h2>Traffic</h2><div class="chart-legend"><span><i class="delivery-swatch"></i>SMTP Deliveries</span><span><i class="http-swatch"></i>HTTP requests</span></div></div><div id="chart" class="admin-chart"></div><div id="chart-tooltip" class="chart-tooltip" hidden></div><div class="history-strip"><span id="history">Loading history…</span><span id="ingestion"></span></div></section>
 <div class="admin-rankings"><section class="admin-panel"><div class="panel-heading"><h2>Hot inboxes</h2><span class="panel-unit">SMTP Deliveries</span></div><div id="inboxes"></div></section><section class="admin-panel"><div class="panel-heading"><h2>Sender domains</h2><span class="panel-unit">SMTP Deliveries</span></div><div id="senders"></div></section><section class="admin-panel"><div class="panel-heading"><h2>HTTP callers</h2><span class="panel-unit">Requests</span></div><div id="callers"></div></section></div>
+<section class="service-panel" aria-label="Service status"><div id="system-metrics" class="system-metrics"><span class="muted">Loading service status…</span></div></section>
 </section>
 <section id="activity" hidden>
 <div class="admin-panel activity-panel"><div class="panel-heading"><h2>Activity log</h2><span id="activity-summary" class="panel-unit">Latest first</span></div>
 <div class="activity-table-wrap"><table class="activity-table"><colgroup><col class="col-time"><col class="col-kind"><col class="col-recipient"><col class="col-detail"><col class="col-ip"><col class="col-result"><col class="col-expand"></colgroup><thead><tr><th id="activity-time-heading" scope="col">Time</th><th scope="col">Type</th><th scope="col">Recipient / message</th><th scope="col">Sender / request</th><th scope="col">Source / caller IP</th><th scope="col">Size / response</th><th scope="col"><span class="visually-hidden">Details</span></th></tr></thead><tbody id="events"></tbody></table></div></div>
 <div class="admin-pagination"><button id="previous" class="btn btn-secondary btn-sm">Previous</button><span id="page-label"></span><button id="next" class="btn btn-secondary btn-sm">Next</button></div><div id="activity-history" class="history-strip"></div>
 </section>
-<section class="service-panel" aria-label="Service status"><div class="service-strip" id="service-status"><span class="muted">Loading service status…</span></div><div id="system-metrics" class="system-metrics" hidden></div></section>
 <noscript><p>JavaScript is required to query admin metadata.</p></noscript>
 </main>{{template "footer" .}}
 </body></html>{{end}}
