@@ -246,11 +246,10 @@
     if(focusedEvent)Array.from(target.children).find(row=>row.dataset.eventId===focusedEvent)?.querySelector('.event-expand')?.focus({preventScroll:true});
     scrollWrap.scrollTop=scrollTop;
     hasMore=d.hasMore;$('previous').disabled=offset===0;$('next').disabled=!hasMore;
-    const first=offset+(d.events.length?1:0),last=offset+d.events.length;
-    $('page-label').textContent=`Events ${num(first)}–${num(last)}${offset>=d.offsetLimit?' · limit reached':''}`;
-    const type=kindLabels[params.get('kind')] || 'All events';
+    const first=d.events.length?offset+1:0,last=d.events.length?offset+d.events.length:0;
+    $('page-label').textContent=`Events ${num(first)}–${num(last)} of ${num(d.total)}${offset>=d.offsetLimit?' · limit reached':''}`;
     const windowLabel={'1h':'Last hour','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'}[params.get('window')] || 'Last 24 hours';
-    $('activity-summary').textContent=type+' · '+windowLabel+' · Latest first';
+    $('activity-summary').textContent=num(d.total)+' matching events · '+windowLabel+' · Latest first';
   }
   function freshness() {
     if($('freshness').dataset.stale==='true')return;

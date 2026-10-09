@@ -334,8 +334,19 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), adminQueryTimeout)
 	defer cancel()
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		adminError(w, 503, "Analytics query unavailable; retry shortly.")
+		return
+	}
+	defer tx.Rollback()
+	var total int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+union+`)`+where, args...).Scan(&total); err != nil {
+		adminError(w, 503, "Analytics query unavailable; retry shortly.")
+		return
+	}
 	args = append(args, adminPageSize+1, offset)
-	rows, err := db.QueryContext(ctx, `SELECT * FROM (`+union+`)`+where+` ORDER BY timestamp DESC,id DESC,kind DESC LIMIT ? OFFSET ?`, args...)
+	rows, err := tx.QueryContext(ctx, `SELECT * FROM (`+union+`)`+where+` ORDER BY timestamp DESC,id DESC,kind DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		adminError(w, 503, "Analytics query unavailable; retry shortly.")
 		return
@@ -362,5 +373,5 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 	if len(events) > adminPageSize {
 		events = events[:adminPageSize]
 	}
-	adminJSON(w, map[string]any{"generatedAt": now, "events": events, "offset": offset, "pageSize": adminPageSize, "hasMore": more, "offsetLimit": adminMaxOffset})
+	adminJSON(w, map[string]any{"generatedAt": now, "events": events, "total": total, "offset": offset, "pageSize": adminPageSize, "hasMore": more, "offsetLimit": adminMaxOffset})
 }
