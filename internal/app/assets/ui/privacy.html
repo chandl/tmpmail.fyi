@@ -11,7 +11,7 @@
 <p class="lede">tmpmail provides temporary inboxes for development and testing. Anyone who knows an inbox address can read its messages. Please do not use it for private, sensitive, or important information.</p>
 <h2>Your messages</h2>
 <p>To receive and display email, we store the message and its attachments, along with the sender, recipient, subject, email headers, and the time it arrived. Inboxes do not require an account or password.</p>
-<p>Messages are automatically deleted after one hour by default. The person running the service can change this period, and storage limits may cause messages to be deleted sooner.</p>
+<p>Messages are automatically deleted after {{.MessageLifetime}} on this service. Storage limits may cause messages to be deleted sooner.</p>
 <p>tmpmail does not send email on your behalf. It also prevents images hosted on other websites from loading inside messages.</p>
 <h2>Service activity and analytics</h2>
 <p>When analytics is enabled, the service keeps a separate record of activity to help its operators understand usage and investigate slow requests, delivery problems, and unwanted traffic. These records may include:</p>

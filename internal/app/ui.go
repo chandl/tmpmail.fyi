@@ -66,13 +66,47 @@ func serveUIAsset(contentType, content string) http.HandlerFunc {
 
 // pageChrome is shared by every server-rendered page.
 type pageChrome struct {
-	CSS          template.CSS
-	AssetVersion string
-	Year         int
+	CSS             template.CSS
+	AssetVersion    string
+	Year            int
+	MessageLifetime string
 }
 
 func newPageChrome() pageChrome {
 	return pageChrome{CSS: template.CSS(uiCSS), AssetVersion: uiVersion, Year: time.Now().Year()}
+}
+
+// publicPageChrome uses the same lifetime as message storage.
+func publicPageChrome(ttl time.Duration) pageChrome {
+	chrome := newPageChrome()
+	chrome.MessageLifetime = messageLifetimeLabel(ttl)
+	return chrome
+}
+
+func messageLifetimeLabel(ttl time.Duration) string {
+	var parts []string
+	for _, unit := range []struct {
+		duration time.Duration
+		name     string
+	}{{24 * time.Hour, "day"}, {time.Hour, "hour"}, {time.Minute, "minute"}} {
+		count := ttl / unit.duration
+		if count > 0 {
+			name := unit.name
+			if count != 1 {
+				name += "s"
+			}
+			parts = append(parts, strconv.FormatInt(int64(count), 10)+" "+name)
+			ttl %= unit.duration
+		}
+	}
+	if ttl > 0 || len(parts) == 0 {
+		name := "seconds"
+		if ttl == time.Second {
+			name = "second"
+		}
+		parts = append(parts, strconv.FormatFloat(ttl.Seconds(), 'f', -1, 64)+" "+name)
+	}
+	return strings.Join(parts, " ")
 }
 
 // snippet is a copyable command; ui.js fills in {origin}, {inbox}, and {id}.

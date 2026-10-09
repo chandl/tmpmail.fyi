@@ -13,7 +13,7 @@
 {{define "header"}}<a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header"><div class="wrap">
 <a class="wordmark" href="/">tmpmail</a>
-<span class="tagline">Disposable email · deleted after 1 hour</span>
+<span class="tagline">Disposable email · deleted after {{.MessageLifetime}}</span>
 <nav class="header-nav" aria-label="Site">
 <a href="/privacy">Privacy</a>
 {{template "theme-toggle" .}}

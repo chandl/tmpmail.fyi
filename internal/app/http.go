@@ -64,7 +64,7 @@ func NewHTTPServer(cfg Config, store *Store, analytics ...*Analytics) http.Handl
 	mux.HandleFunc("GET /openapi.json", serveAPISpec)
 	mux.HandleFunc("GET /privacy", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = privacyTemplate.Execute(w, newPageChrome())
+		_ = privacyTemplate.Execute(w, publicPageChrome(store.cfg.MessageTTL))
 	})
 	// A single path segment is an inbox shortcut (for example, /build-482).
 	// More-specific registered routes above take precedence over this pattern.
@@ -333,7 +333,7 @@ func renderInbox(w http.ResponseWriter, store *Store, domain, inboxName string, 
 		Page        int
 		OlderOffset int
 		CountLabel  string
-	}{pageChrome: newPageChrome(), InboxName: inboxName, Domain: domain}
+	}{pageChrome: publicPageChrome(store.cfg.MessageTTL), InboxName: inboxName, Domain: domain}
 	if inboxName != "" {
 		if strings.ContainsAny(inboxName, "@/\\") {
 			data.Error = "Enter only the inbox name, without the domain."
