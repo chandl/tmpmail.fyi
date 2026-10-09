@@ -104,7 +104,8 @@
     }
   }
   function health(s, earliest) {
-    const smtp=s.smtp || {}, store=s.store || {}, a=s.analytics || {};
+    const smtp=s.smtp || {}, store=s.store || {}, a=s.analytics || {}, cfg=s.settings || {};
+    const limit = value => Number(value)>0?num(value):'Unlimited';
     const first=earliest || a.earliestEvent;
     const historyText=`${first ? 'History from '+shortDate(first) : 'No retained history'} · ${num(s.retentionHours / 24)}-day limit`;
     const ingestionText=`${a.available ? 'Ingestion '+Number(a.lagSeconds || 0).toFixed(1)+'s behind' : 'Ingestion unavailable'} · ${num(a.droppedEvents)} dropped`;
@@ -121,19 +122,21 @@
     if(!activity) {
       const cards=[
         ['Process','Running',false,[['Uptime',duration(s.uptimeSeconds)],['Heap',bytes(s.memoryBytes)],['Goroutines',num(s.goroutines)]]],
-        ['SMTP',`${num(smtp.activeConnections)} / ${num(smtp.connectionLimit)}`,smtp.tlsEnabled && new Date(smtp.tlsNotAfter)<new Date(),[['TLS',smtp.tlsEnabled?'Enabled':'Off'],...(smtp.tlsEnabled?[['Expires',shortDate(smtp.tlsNotAfter)]]:[])]],
-        ['Mail',bytes(store.storedBytes),false,[['Budget',bytes(s.messageStorageBudgetBytes)],['Messages',num(store.storedMessages)]]],
+        ['SMTP',`${num(smtp.activeConnections)} / ${num(smtp.connectionLimit)}`,smtp.tlsEnabled && new Date(smtp.tlsNotAfter)<new Date(),[['Per-IP limit',limit(cfg.smtpPerIP),'SMTP_MAX_CONNECTIONS_PER_IP'],['Recipients',num(cfg.smtpRecipients),'SMTP_MAX_RECIPIENTS'],['Message size',bytes(cfg.maxMessageBytes),'MAX_MESSAGE_BYTES'],['TLS',smtp.tlsEnabled?'Enabled':'Off'],...(smtp.tlsEnabled?[['Expires',shortDate(smtp.tlsNotAfter)]]:[])]],
+        ['Mail',bytes(store.storedBytes),false,[['Budget',bytes(s.messageStorageBudgetBytes),'MAX_STORAGE_BYTES'],['Messages',num(store.storedMessages)],['Expiration',duration(cfg.messageTTLSeconds),'MESSAGE_TTL']]],
         ['Cleanup',store.cleanupErrors?num(store.cleanupErrors)+' errors':'OK',store.cleanupErrors>0,[['Last run',store.lastCleanup?clock(store.lastCleanup):'Not yet'],['Errors',num(store.cleanupErrors)]]],
-        ['Analytics',a.available?'Connected':'Unavailable',!a.available,[['Storage',bytes(a.storageBytes)],['Budget',bytes(s.storageBudgetBytes)],['Retention',num(s.retentionHours/24)+' days'],['History from',first?shortDate(first):'None'],['Early evictions',num(a.earlyEvictedEvents)]]],
+        ['Analytics',a.available?'Connected':'Unavailable',!a.available,[['Storage',bytes(a.storageBytes)],['Budget',bytes(s.storageBudgetBytes),'ANALYTICS_MAX_STORAGE_BYTES'],['Retention',num(s.retentionHours/24)+' days','ANALYTICS_EVENT_TTL'],['History from',first?shortDate(first):'None'],['Early evictions',num(a.earlyEvictedEvents)]]],
+        ['HTTP','Per client IP',false,[['Rate',num(cfg.rateLimitRPS)+' req/s','HTTP_RATE_LIMIT_RPS'],['Burst',num(cfg.rateLimitBurst),'HTTP_RATE_LIMIT_BURST'],['Concurrent',limit(cfg.httpConcurrency),'HTTP_MAX_CONCURRENT_REQUESTS'],['Client IP',cfg.clientIPHeader || 'Socket IP','HTTP_RATE_LIMIT_IP_HEADER']]],
+        ['Observability',cfg.metricsEnabled?'Metrics on':'Metrics off',false,[['Access logs',cfg.accessLogMode || 'Off','HTTP_ACCESS_LOG_MODE'],['Log headers',(cfg.logHeaders || []).join(', ') || 'None','HTTP_LOG_HEADERS'],['Metrics',cfg.metricsEnabled?'Enabled':'Disabled','METRICS_ENABLED'],['Listen address',cfg.metricsAddr || '—','METRICS_ADDR']]],
         ['Ingestion',a.available?Number(a.lagSeconds || 0).toFixed(1)+'s behind':'Unavailable',!a.available || a.lagSeconds>30 || a.droppedEvents>0,[['Last batch',a.lastIngested?clock(a.lastIngested):'None yet'],['Dropped events',num(a.droppedEvents)],['Write errors',num(a.writeErrors)]]]
       ];
       const target=$('system-metrics');target.replaceChildren();
       for(const [label,value,warn,pairs] of cards) {
         const card=node('section',undefined,'system-metric'+(warn?' warning':''));
         const heading=node('div',undefined,'system-metric-heading');
-        heading.append(node('h2',label),node('strong',value));card.append(heading);
+        heading.append(node('h2',label),node('strong',value));if(label==='SMTP')heading.title='SMTP_MAX_CONNECTIONS · active / limit';card.append(heading);
         const dl=node('dl');
-        for(const [key,detail] of pairs) {const row=node('div');const value=node('dd',detail);const timestamp={'Last run':store.lastCleanup,'Last batch':a.lastIngested,'History from':first,'Expires':smtp.tlsNotAfter}[key];value.title=timestamp?date(timestamp):detail;row.append(node('dt',key),value);dl.append(row);}
+        for(const [key,detail,env] of pairs) {const row=node('div');const value=node('dd',detail);const label=node('dt',key);if(env){row.title=env+' = '+detail;label.title=env;}const timestamp={'Last run':store.lastCleanup,'Last batch':a.lastIngested,'History from':first,'Expires':smtp.tlsNotAfter}[key];value.title=env?env+' = '+detail:timestamp?date(timestamp):detail;row.append(label,value);dl.append(row);}
         card.append(dl);target.append(card);
       }
       target.title='Counters reset on process restart. Analytics storage counts live SQLite pages and WAL; history may expire or be evicted early.';

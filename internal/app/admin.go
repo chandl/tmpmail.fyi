@@ -134,6 +134,30 @@ func (s *adminServer) status(w http.ResponseWriter, r *http.Request) {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	result := map[string]any{"generatedAt": time.Now(), "uptimeSeconds": time.Since(adminStarted).Seconds(), "memoryBytes": mem.Alloc, "goroutines": runtime.NumGoroutine(), "retentionHours": s.cfg.AnalyticsEventTTL.Hours(), "storageBudgetBytes": s.cfg.AnalyticsMaxStorageBytes, "messageStorageBudgetBytes": s.cfg.MaxStorageBytes}
+	rps, burst := s.cfg.HTTPRateLimitRPS, s.cfg.HTTPRateLimitBurst
+	if rps <= 0 {
+		rps = defaultRateLimitRPS
+	}
+	if burst <= 0 {
+		burst = defaultRateLimitBurst
+	}
+	recipients := s.cfg.MaxSMTPRecipients
+	if recipients == 0 {
+		recipients = defaultMaxSMTPRecipients
+	}
+	logMode := s.cfg.HTTPAccessLogMode
+	if logMode == "" {
+		logMode = "off"
+	}
+	// Deliberate allowlist of effective startup settings, never the raw environment.
+	result["settings"] = map[string]any{
+		"rateLimitRPS": rps, "rateLimitBurst": burst,
+		"httpConcurrency": s.cfg.MaxHTTPRequests, "clientIPHeader": s.cfg.HTTPRateLimitIPHeader,
+		"smtpPerIP": s.cfg.MaxSMTPConnectionsPerIP, "smtpRecipients": recipients,
+		"maxMessageBytes": s.cfg.MaxMessageBytes, "messageTTLSeconds": s.cfg.MessageTTL.Seconds(),
+		"accessLogMode": logMode, "logHeaders": s.cfg.HTTPLogHeaders,
+		"metricsEnabled": s.cfg.MetricsEnabled, "metricsAddr": s.cfg.MetricsAddr,
+	}
 	if s.store != nil {
 		result["store"] = s.store.Status()
 	}

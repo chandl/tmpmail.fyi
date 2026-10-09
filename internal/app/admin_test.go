@@ -258,3 +258,35 @@ func BenchmarkAdminQueries(b *testing.B) {
 		})
 	}
 }
+
+func TestAdminEffectiveStartupSettings(t *testing.T) {
+	cfg := Config{HTTPRateLimitRPS: 17.5, HTTPRateLimitBurst: 80, MaxHTTPRequests: 123, HTTPRateLimitIPHeader: "X-Real-IP", MaxSMTPConnectionsPerIP: 4, MaxSMTPRecipients: 7, MaxMessageBytes: 4096, MessageTTL: 2 * time.Hour, HTTPAccessLogMode: "errors", HTTPLogHeaders: []string{"User-Agent"}, MetricsEnabled: true, MetricsAddr: "127.0.0.1:9090", SMTPTLSKeyFile: "private-key-path"}
+	var out struct {
+		Settings struct {
+			Rate       float64  `json:"rateLimitRPS"`
+			Burst      int      `json:"rateLimitBurst"`
+			Concurrent int      `json:"httpConcurrency"`
+			IPHeader   string   `json:"clientIPHeader"`
+			PerIP      int      `json:"smtpPerIP"`
+			Recipients int      `json:"smtpRecipients"`
+			MaxBytes   int64    `json:"maxMessageBytes"`
+			TTL        float64  `json:"messageTTLSeconds"`
+			Logs       string   `json:"accessLogMode"`
+			Headers    []string `json:"logHeaders"`
+			Metrics    bool     `json:"metricsEnabled"`
+			Addr       string   `json:"metricsAddr"`
+		} `json:"settings"`
+	}
+	w := adminGet(t, NewAdminServer(cfg, nil, nil, nil), "/api/status", &out)
+	s := out.Settings
+	if s.Rate != 17.5 || s.Burst != 80 || s.Concurrent != 123 || s.IPHeader != "X-Real-IP" || s.PerIP != 4 || s.Recipients != 7 || s.MaxBytes != 4096 || s.TTL != 7200 || s.Logs != "errors" || len(s.Headers) != 1 || !s.Metrics || s.Addr != "127.0.0.1:9090" {
+		t.Fatalf("startup settings: %+v", s)
+	}
+	if strings.Contains(w.Body.String(), "private-key-path") {
+		t.Fatal("private key configuration exposed")
+	}
+	adminGet(t, NewAdminServer(Config{}, nil, nil, nil), "/api/status", &out)
+	if out.Settings.Rate != defaultRateLimitRPS || out.Settings.Burst != defaultRateLimitBurst || out.Settings.Recipients != defaultMaxSMTPRecipients || out.Settings.Concurrent != 0 || out.Settings.PerIP != 0 || out.Settings.Logs != "off" {
+		t.Fatalf("runtime fallback settings: %+v", out.Settings)
+	}
+}
