@@ -3,7 +3,7 @@
 {{template "head" .}}
 <title>tmpmail{{if .Address}} - {{.Address}}{{end}}</title>
 </head>
-<body{{if .Messages}} class="has-inbox"{{end}} data-address="{{.Address}}" data-offset="{{.Offset}}" data-has-more="{{.HasMore}}">
+<body{{if .Messages}} class="has-inbox"{{end}} data-address="{{.Address}}" data-offset="{{.Offset}}" data-has-more="{{.HasMore}}" data-selected-message="{{.SelectedID}}">
 {{template "header" .}}
 <main id="main" class="wrap">
 {{if .Messages}}{{template "mailbox" .}}{{else}}{{template "start" .}}{{end}}
@@ -59,7 +59,7 @@
 <div class="mailbox">
 <div class="list-pane">
 <div class="message-list" role="listbox" aria-label="Messages">
-{{range $i, $m := .Messages}}{{template "row" (rowData $m (eq $i 0))}}{{end}}
+{{range $i, $m := .Messages}}{{template "row" (rowData $m (eq $m.ID $.SelectedID))}}{{end}}
 </div>
 {{if or .Offset .HasMore}}<nav class="pagination" aria-label="Inbox pages">
 {{if .Offset}}<a class="btn btn-secondary btn-sm" href="/?inbox={{.InboxName}}{{if .NewerOffset}}&amp;offset={{.NewerOffset}}{{end}}" rel="prev">← Newer</a>{{else}}<span class="btn btn-secondary btn-sm is-disabled" aria-disabled="true">← Newer</span>{{end}}
@@ -69,13 +69,13 @@
 </div>
 <div class="reader-pane" aria-label="Message">
 <button class="btn btn-ghost btn-sm back-button" type="button" data-back>← Back to inbox</button>
-{{range $i, $m := .Messages}}{{template "message" (rowData $m (eq $i 0))}}{{end}}
+{{range $i, $m := .Messages}}{{template "message" (rowData $m (eq $m.ID $.SelectedID))}}{{end}}
 </div>
 </div>
 <template id="row-template">{{template "row" (rowData emptyMessage false)}}</template>
 <template id="message-template">{{template "message" (rowData emptyMessage false)}}</template>{{end}}
 
-{{define "row"}}{{$m := .Message}}<a class="message-row" role="option" id="row-{{$m.ID}}" href="#m-{{$m.ID}}" data-id="{{$m.ID}}" aria-selected="{{.Selected}}" tabindex="{{if .Selected}}0{{else}}-1{{end}}">
+{{define "row"}}{{$m := .Message}}<a class="message-row" role="option" id="row-{{$m.ID}}" href="{{$m.OpenURL}}" data-id="{{$m.ID}}" aria-selected="{{.Selected}}" tabindex="{{if .Selected}}0{{else}}-1{{end}}">
 <span class="row-top"><span class="row-from" title="{{$m.FromAddress}}">{{$m.FromLabel}}</span><time class="row-time local-time" data-format="relative" datetime="{{$m.Received.Format "2006-01-02T15:04:05Z07:00"}}">{{$m.Received.Format "15:04 UTC"}}</time></span>
 <span class="row-subject">{{$m.SubjectLabel}}</span>
 <span class="row-expiry" data-expires="{{$m.ExpiresAt.Format "2006-01-02T15:04:05Z07:00"}}">Expires {{$m.ExpiresAt.Format "15:04 UTC"}}</span>
@@ -92,7 +92,7 @@
 </header>
 <div class="body-toolbar"><div class="segmented" role="group" aria-label="Email format"><button type="button" aria-pressed="true" data-view="html">Formatted</button><button type="button" aria-pressed="false" data-view="plain">Plain text</button></div><div class="body-tools"><span class="blocked-images" data-blocked-images title="tmpmail never loads images in emails, so senders can't tell when a message is opened."{{if not $m.Images.Total}} hidden{{end}}>{{template "image-icon"}}<span data-blocked-label>{{$m.Images.Label}}</span></span><button class="btn btn-ghost btn-sm dark-preview" type="button" aria-pressed="true" data-email-dark-toggle title="Approximates dark mode by inverting the email's colors">{{template "moon"}}Dark preview</button></div></div>
 <div class="paper paper-frame" data-frame></div>
-<div class="plain-body"><div class="paper"><pre>{{$m.Body}}</pre></div></div>
+<div class="plain-body"><div class="paper"><pre>{{$m.Body}}</pre>{{if not $m.Loaded}}<p data-message-fallback><a href="{{$m.OpenURL}}">Open this message</a> to read its body.</p>{{end}}</div></div>
 {{if $m.Attachments}}<section class="attachments" aria-label="Attachments"><h3>Attachments</h3><ul>{{range $m.Attachments}}<li><a href="/api/v1/messages/{{$m.ID}}/attachments/{{.Index}}" download>{{template "paperclip"}}<span>{{.Filename}}</span></a></li>{{end}}</ul></section>{{end}}
 <details class="disclosure headers"><summary>Show original headers</summary><pre>{{$m.Headers}}</pre></details>
 <details class="disclosure dev-tools"><summary>Use with the API</summary>

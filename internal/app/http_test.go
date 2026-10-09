@@ -579,3 +579,27 @@ func TestInboxRenderHonorsCanceledRequest(t *testing.T) {
 		t.Fatalf("canceled request rendered a response: %s", response.Body.String())
 	}
 }
+
+func TestInboxRequestedMessageRendersSingleBodyWithFallbackLinks(t *testing.T) {
+	store := testStore(t, time.Hour)
+	older := saveOne(t, store, "build@mail.test", "older@example.org", []byte("Subject: older\r\n\r\nrequested-older-body"))
+	newest := saveOne(t, store, "build@mail.test", "new@example.org", []byte("Subject: newest\r\n\r\ndefault-body-not-rendered"))
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/?inbox=build&message="+older.ID, nil))
+	page := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(page, "requested-older-body") || strings.Contains(page, "default-body-not-rendered") {
+		t.Fatalf("wrong body selection: status=%d body=%s", response.Code, page)
+	}
+	for _, want := range []string{`data-selected-message="` + older.ID + `"`, `data-message-id="` + older.ID + `" data-loaded="true"`, `data-message-id="` + newest.ID + `" data-loaded="false"`, `href="/?inbox=build&amp;message=` + newest.ID + `#m-` + newest.ID + `"`, `data-message-fallback`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("missing %q in page", want)
+		}
+	}
+	// Missing or cross-page selections cannot read arbitrary message bodies.
+	fallback := httptest.NewRecorder()
+	handler.ServeHTTP(fallback, httptest.NewRequest(http.MethodGet, "/?inbox=build&message=missing", nil))
+	if !strings.Contains(fallback.Body.String(), "default-body-not-rendered") || strings.Contains(fallback.Body.String(), "requested-older-body") {
+		t.Fatalf("missing selection should render first body")
+	}
+}

@@ -7,7 +7,7 @@ const script = readFileSync(join(__dirname, 'assets/ui/ui.js'), 'utf8');
 
 // A minimal DOM surface drives the actual shipped script, including selection,
 // fetch, and polling. No browser packages or copied implementation are needed.
-function harness({ ids = ['a', 'b'], hasMore = false, hash = '', loaded = true, detailStatus = 200 } = {}) {
+function harness({ ids = ['a', 'b'], hasMore = false, hash = '', loaded = true, selectedID = ids[0], detailStatus = 200 } = {}) {
   const timers = [];
   const requests = [];
   const replacements = [];
@@ -29,8 +29,8 @@ function harness({ ids = ['a', 'b'], hasMore = false, hash = '', loaded = true, 
   });
   const rows = ids.map(id => Object.assign(element({ id }), { tabIndex: -1 }));
   const articles = ids.map((id, index) => {
-    const article = element({ messageId: id, loaded: index === 0 && loaded ? 'true' : 'false' });
-    article.text = { textContent: index === 0 && loaded ? 'already rendered' : '' };
+    const article = element({ messageId: id, loaded: id === selectedID && loaded ? 'true' : 'false' });
+    article.text = { textContent: id === selectedID && loaded ? 'already rendered' : '' };
     article.headers = { textContent: '' };
     article.classList = classes(...(index === 0 ? ['is-active'] : []));
     article.querySelector = selector => ({ '.plain-body pre': article.text, '.headers pre': article.headers })[selector] || null;
@@ -44,7 +44,7 @@ function harness({ ids = ['a', 'b'], hasMore = false, hash = '', loaded = true, 
   const mailbox = element();
   mailbox.querySelector = selector => ({ '.message-list': list, '.reader-pane': reader })[selector] || null;
   const status = { textContent: '' };
-  const body = element({ address: 'build@mail.test', offset: '0', hasMore: String(hasMore) });
+  const body = element({ address: 'build@mail.test', offset: '0', hasMore: String(hasMore), selectedMessage: selectedID });
   const document = Object.assign(element(), {
     documentElement: element(), body, visibilityState: 'visible',
     querySelector: selector => ({ '.mailbox': mailbox, '#status': status })[selector] || null,
@@ -53,7 +53,7 @@ function harness({ ids = ['a', 'b'], hasMore = false, hash = '', loaded = true, 
   });
   const location = { hash, href: 'https://mail.test/?inbox=build' + hash, origin: 'https://mail.test', reload() { reloads++; } };
   const context = {
-    document, location, window: element(), navigator: {}, CSS: { escape: value => value },
+    URL, document, location, window: element(), navigator: {}, CSS: { escape: value => value },
     localStorage: { getItem: () => null },
     matchMedia: () => ({ matches: false, addEventListener() {} }),
     history: { state: null, replaceState(_state, _title, url) { replacements.push(url); }, pushState() {} },
@@ -97,9 +97,9 @@ test('hash selects a non-first message and missing hash falls back and is correc
   const selected = harness({ hash: '#m-b' });
   await selected.settle();
   assert.deepEqual(selected.requests, ['/ui/messages/b']);
-  assert.deepEqual(selected.replacements, []);
+  assert.deepEqual(selected.replacements, ['/?inbox=build&message=b#m-b']);
   const expired = harness({ hash: '#m-gone' });
-  assert.deepEqual(expired.replacements, ['#m-a']);
+  assert.deepEqual(expired.replacements, ['/?inbox=build&message=a#m-a']);
   assert.deepEqual(expired.requests, []);
 });
 
@@ -137,3 +137,13 @@ for (const status of [404, 500, 'network']) {
     assert.equal(ui.articles[0].dataset.loaded, 'false');
   });
 }
+
+test('server-selected later body is reused and selection query stays aligned', async () => {
+  const ui = harness({ selectedID: 'b' });
+  assert.deepEqual(ui.requests, []);
+  assert.deepEqual(ui.replacements, ['/?inbox=build&message=b#m-b']);
+  ui.click(0);
+  await ui.settle();
+  assert.deepEqual(ui.requests, ['/ui/messages/a']);
+  assert.equal(ui.replacements.at(-1), '/?inbox=build&message=a#m-a');
+});

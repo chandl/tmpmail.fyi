@@ -286,6 +286,7 @@
         .then(response => (response.ok ? response.json() : Promise.reject(response.status)))
         .then(message => {
           text.textContent = message.text;
+          $('[data-message-fallback]', article)?.remove();
           headers.textContent = message.headers;
           if (message.attachments?.length && !$('.attachments', article)) addAttachments(article, message.attachments);
           article.classList.toggle('has-html', message.hasHtml);
@@ -331,7 +332,12 @@
         article?.classList.add('is-active');
         reader.scrollTop = 0;
         current = row;
-        if (remember) history.replaceState(history.state, '', '#m-' + row.dataset.id);
+        if (remember) {
+          const url = new URL(location.href);
+          url.searchParams.set('message', row.dataset.id);
+          url.hash = 'm-' + row.dataset.id;
+          history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+        }
       }
       if (article) {
         loadMessage(article);
@@ -384,7 +390,8 @@
     });
 
     const fromHash = location.hash.startsWith('#m-') && $('#row-' + CSS.escape(location.hash.slice(3)), list);
-    select(fromHash || rows()[0], { remember: !fromHash });
+    const fromServer = body.dataset.selectedMessage && $('#row-' + CSS.escape(body.dataset.selectedMessage), list);
+    select(fromHash || fromServer || rows()[0]);
   }
 
   // Gentle auto-refresh: one small request every 10s while the tab is visible,

@@ -90,7 +90,7 @@ func NewHTTPServer(cfg Config, store *Store) http.Handler {
 		http.Redirect(w, r, location.String(), http.StatusFound)
 	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		renderInbox(r.Context(), w, store, cfg.MailDomain, strings.TrimSpace(r.URL.Query().Get("inbox")), pageOffset(r.URL.Query().Get("offset")))
+		renderInbox(r.Context(), w, store, cfg.MailDomain, strings.TrimSpace(r.URL.Query().Get("inbox")), pageOffset(r.URL.Query().Get("offset")), r.URL.Query().Get("message"))
 	})
 	return requestLogger(
 		rateLimitPerIP(limitHTTPRequests(securityHeaders(mux), cfg.MaxHTTPRequests, cfg.MetricsEnabled), cfg.HTTPRateLimitRPS, cfg.HTTPRateLimitBurst, cfg.HTTPRateLimitIPHeader),
@@ -330,7 +330,7 @@ func limitHTTPRequests(next http.Handler, limit int, metricsEnabled bool) http.H
 	})
 }
 
-func renderInbox(ctx context.Context, w http.ResponseWriter, store *Store, domain, inboxName string, offset int) {
+func renderInbox(ctx context.Context, w http.ResponseWriter, store *Store, domain, inboxName string, offset int, selectedID string) {
 	data := struct {
 		pageChrome
 		InboxName   string
@@ -344,6 +344,7 @@ func renderInbox(ctx context.Context, w http.ResponseWriter, store *Store, domai
 		Page        int
 		OlderOffset int
 		CountLabel  string
+		SelectedID  string
 	}{pageChrome: newPageChrome(), InboxName: inboxName, Domain: domain}
 	if inboxName != "" {
 		if strings.ContainsAny(inboxName, "@/\\") {
@@ -361,15 +362,29 @@ func renderInbox(ctx context.Context, w http.ResponseWriter, store *Store, domai
 			http.Error(w, "storage error", 500)
 			return
 		}
-		for i, message := range messages {
+		if len(messages) > 0 {
+			data.SelectedID = messages[0].ID
+			for _, message := range messages {
+				if message.ID == selectedID {
+					data.SelectedID = selectedID
+					break
+				}
+			}
+		}
+		for _, message := range messages {
 			if ctx.Err() != nil {
 				return
 			}
 			fromName, fromAddress := senderFromHeaders("From: "+message.From, message.From)
-			item := inboxMessage{Message: message, FromName: fromName, FromAddress: fromAddress}
+			query := url.Values{"inbox": {inboxName}, "message": {message.ID}}
+			if offset > 0 {
+				query.Set("offset", strconv.Itoa(offset))
+			}
+			openURL := (&url.URL{Path: "/", RawQuery: query.Encode(), Fragment: "m-" + message.ID}).String()
+			item := inboxMessage{Message: message, FromName: fromName, FromAddress: fromAddress, OpenURL: openURL}
 			// Only the initial selection needs a body. Summaries come from SQLite;
 			// other messages (including attachments) are parsed on selection.
-			if i == 0 {
+			if message.ID == data.SelectedID {
 				full, err := store.GetContext(ctx, message.ID)
 				if ctx.Err() != nil {
 					return
@@ -404,7 +419,8 @@ func renderInbox(ctx context.Context, w http.ResponseWriter, store *Store, domai
 }
 
 type inboxMessage struct {
-	Loaded bool
+	Loaded  bool
+	OpenURL string
 	Message
 	Headers     string
 	Body        string
