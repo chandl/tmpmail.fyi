@@ -135,7 +135,9 @@ count/time axes and per-interval details. Runtime and analytics details appear i
 below the main view. Activity uses compact table rows with expandable metadata.
 Its field filters distinguish exact inbox/domain/IP matches from sender/user-agent
 text matches and apply only when submitted; removable chips show active filters,
-and Clear all restores the default view. Live refresh preserves unapplied edits.
+and Clear all restores the default view. Response-code filtering covers HTTP statuses
+and SMTP accepted deliveries (250); SMTP rejections are not in this log. HTTP response
+times can be sorted fastest or slowest first. Live refresh preserves unapplied edits.
 
 Admin access has **no application authentication**. A separate port is only a
 network boundary: keep it private using loopback, a private network, or an SSH

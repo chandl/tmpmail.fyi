@@ -140,6 +140,27 @@ func TestAdminActivityFiltersPaginationAndLiteralSearch(t *testing.T) {
 			t.Fatalf("HTTP polling filter %s: %+v", check.kind, out)
 		}
 	}
+	if _, err := a.DB().Exec(`UPDATE http_requests SET status=503,duration_ms=80 WHERE id='h2'`); err != nil {
+		t.Fatal(err)
+	}
+	adminGet(t, h, "/api/activity?status=503", &out)
+	if out.Total != 1 || out.Events[0].ID != "h2" {
+		t.Fatalf("status filter: %+v", out)
+	}
+	adminGet(t, h, "/api/activity?kind=delivery&status=250", &out)
+	if out.Total != 56 {
+		t.Fatalf("SMTP accepted status filter: %+v", out)
+	}
+	for _, check := range []struct{ sort, id string }{{"slowest", "h2"}, {"fastest", "h1"}} {
+		adminGet(t, h, "/api/activity?sort="+check.sort, &out)
+		if out.Total != 2 || out.Events[0].ID != check.id {
+			t.Fatalf("HTTP duration sort: %+v", out)
+		}
+	}
+	adminGet(t, h, "/api/activity?status=503&sort=fastest", &out)
+	if out.Total != 1 || out.Events[0].ID != "h2" {
+		t.Fatalf("combined status and sort: %+v", out)
+	}
 	adminGet(t, h, "/api/activity?senderDomain=other.org", &out)
 	if out.Total != 1 || len(out.Events) != 1 || out.Events[0].ID != "different" {
 		t.Fatalf("sender drilldown: %+v", out)
@@ -161,7 +182,7 @@ func TestAdminActivityFiltersPaginationAndLiteralSearch(t *testing.T) {
 	if out.Total != 1 || len(out.Events) != 1 || out.Events[0].ID != "empty" {
 		t.Fatalf("empty sender domain drilldown: %+v", out)
 	}
-	for _, path := range []string{"/api/activity?sender=" + strings.Repeat("x", 321), "/api/activity?userAgent=" + strings.Repeat("x", 321), "/api/activity?sourceIP=" + strings.Repeat("x", 321), "/api/activity?offset=-1", "/api/activity?offset=10001", "/api/activity?kind=bad", "/api/overview?window=90d", "/api/activity?search=" + strings.Repeat("x", 257)} {
+	for _, path := range []string{"/api/activity?sender=" + strings.Repeat("x", 321), "/api/activity?userAgent=" + strings.Repeat("x", 321), "/api/activity?sourceIP=" + strings.Repeat("x", 321), "/api/activity?sort=invalid", "/api/activity?status=abc", "/api/activity?status=99", "/api/activity?status=600", "/api/activity?offset=-1", "/api/activity?offset=10001", "/api/activity?kind=bad", "/api/overview?window=90d", "/api/activity?search=" + strings.Repeat("x", 257)} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 400 {

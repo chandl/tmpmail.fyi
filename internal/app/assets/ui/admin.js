@@ -5,8 +5,8 @@
   const activity = location.pathname === '/activity';
   const form = $('filters');
   const kindLabels = {delivery:'SMTP Deliveries',http:'HTTP requests · all',httpOther:'HTTP · non-poll',httpPoll:'HTTP polls'};
-  const fieldKeys = ['recipient','sender','senderDomain','sourceIP','userAgent'];
-  const filterKeys = ['kind','search','callerIP',...fieldKeys];
+  const fieldKeys = ['recipient','sender','senderDomain','sourceIP','userAgent','status'];
+  const filterKeys = ['kind','sort','search','callerIP',...fieldKeys];
   const REFRESH_MS = 5000;
   let offset = Number(params.get('offset')) || 0, hasMore = false, busy = false;
   let lastSuccess = null, live = true, requestVersion = 0, controller, chartData;
@@ -39,12 +39,13 @@
   function syncFilters() {
     form.elements.window.value=params.get('window') || '24h';
     form.elements.kind.value=params.get('kind') || '';
+    form.elements.sort.value=params.get('sort') || 'latest';
     for(const key of fieldKeys) {form.elements[key].value=params.get(key) || '';form.elements[key].dataset.emptyExact=String(params.has(key)&&params.get(key)==='');}
     pendingFilters();
   }
   function pendingFilters() {
     if(!activity)return;
-    const dirty=form.elements.window.value!==(params.get('window') || '24h') || form.elements.kind.value!==(params.get('kind') || '') || fieldKeys.some(key=>form.elements[key].value.trim()!==(params.get(key) || ''));
+    const dirty=form.elements.sort.value!==(params.get('sort') || 'latest') || form.elements.window.value!==(params.get('window') || '24h') || form.elements.kind.value!==(params.get('kind') || '') || fieldKeys.some(key=>form.elements[key].value.trim()!==(params.get(key) || ''));
     $('filter-pending').hidden=!dirty;
     $('clear-filters').disabled=!dirty&&!filterKeys.some(key=>params.has(key))&&(params.get('window') || '24h')==='24h';
   }
@@ -52,10 +53,11 @@
     const target=$('exact-filter');target.replaceChildren();
     if(!activity) {target.hidden=true;return;}
     const windows={'1h':'Last hour','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'};
-    const labels={recipient:'Inbox (exact)',sender:'SMTP sender contains',senderDomain:'Sender domain (exact)',sourceIP:'IP address (exact)',userAgent:'HTTP user agent contains',callerIP:'HTTP caller IP (exact)'};
+    const labels={recipient:'Inbox (exact)',sender:'SMTP sender contains',senderDomain:'Sender domain (exact)',sourceIP:'IP address (exact)',userAgent:'HTTP user agent contains',status:'Response code',callerIP:'HTTP caller IP (exact)'};
     const filters=[];
     if(params.get('window')&&params.get('window')!=='24h')filters.push(['window',windows[params.get('window')] || params.get('window')]);
     if(params.get('kind'))filters.push(['kind',kindLabels[params.get('kind')] || 'All events']);
+    if(params.get('sort')&&params.get('sort')!=='latest')filters.push(['sort',params.get('sort')==='slowest'?'HTTP · slowest first':'HTTP · fastest first']);
     if(params.get('search'))filters.push(['search','Search: '+params.get('search')]);
     for(const key of [...fieldKeys,'callerIP'])if(params.has(key))filters.push([key,labels[key]+': '+(params.get(key) || '(empty)')]);
     for(const [key,label] of filters) {
@@ -78,6 +80,7 @@
   function applyFilters() {
     params.set('window',form.elements.window.value);
     for(const key of ['kind',...fieldKeys]) {const value=form.elements[key].value.trim();if(value)params.set(key,value);else if(form.elements[key].dataset.emptyExact!=='true')params.delete(key);}
+    form.elements.sort.value==='latest'?params.delete('sort'):params.set('sort',form.elements.sort.value);
     params.delete('search');
     offset=0;syncFilters();filterChips();resetActivityScroll();refresh();
   }
@@ -211,7 +214,7 @@
   function eventMetadata(e) {
     const content=node('div',undefined,'event-metadata'), list=node('dl');
     const pairs=[['Timestamp',date(e.timestamp)],['Event ID',e.id],['Recipient',e.recipient || '—']];
-    if(e.kind==='delivery')pairs.push(['Envelope sender',e.sender || '(empty)'],['Sender domain',e.senderDomain || '(empty)'],['SMTP source IP',e.ip || 'Unknown'],['Size',bytes(e.size)]);
+    if(e.kind==='delivery')pairs.push(['Envelope sender',e.sender || '(empty)'],['Sender domain',e.senderDomain || '(empty)'],['SMTP source IP',e.ip || 'Unknown'],['Size',bytes(e.size)],['SMTP result','250 · Accepted']);
     else pairs.push(['HTTP caller IP',e.ip || 'Unknown'],['Request',e.method+' '+e.route],['Status',e.status],['Duration',Number(e.durationMs).toFixed(1)+' ms'],['Message ID',e.messageId || '—'],['Polling',e.polling?'Identified UI poll':'Not marked as polling'],['Raw user agent',e.userAgent || '(empty)']);
     for(const [label,value] of pairs) {const item=node('div');item.append(node('dt',label),node('dd',String(value)));list.append(item);}
     content.append(list);return content;
@@ -231,7 +234,7 @@
       const detail=node('td',e.kind==='delivery'?(e.sender || '(empty sender)'):e.method+' '+e.route,'event-detail');detail.title=detail.textContent;
       const source=node('td',undefined,'event-source'),ip=node('span',e.ip || 'Unknown');source.append(node('span',e.kind==='delivery'?'SMTP':'HTTP','source-label'),ip);source.title=(e.kind==='delivery'?'SMTP source IP: ':'HTTP caller IP: ')+(e.ip || 'Unknown');
       const result=node('td',undefined,'event-result');
-      if(e.kind==='delivery') {result.textContent=bytes(e.size);result.title='Accepted recipient delivery · '+bytes(e.size);}
+      if(e.kind==='delivery') {result.append(node('span','250','event-status'),node('span',' · '+bytes(e.size),'result-duration'));result.title='SMTP 250 · Accepted recipient delivery · '+bytes(e.size);}
       else {result.append(node('span',e.status,'event-status'+(e.status>=400?' error':'')),node('span',' · '+Number(e.durationMs).toFixed(1)+' ms','result-duration'));}
       const action=node('td',undefined,'event-action'),toggle=node('button','›','icon-btn event-expand');toggle.type='button';toggle.setAttribute('aria-label','Details for '+e.kind+' event at '+date(e.timestamp));
       const expanded=node('tr',undefined,'event-expanded'),cell=node('td');cell.colSpan=7;cell.append(eventMetadata(e));expanded.append(cell);
@@ -249,7 +252,7 @@
     const first=d.events.length?offset+1:0,last=d.events.length?offset+d.events.length:0;
     $('page-label').textContent=`Events ${num(first)}–${num(last)} of ${num(d.total)}${offset>=d.offsetLimit?' · limit reached':''}`;
     const windowLabel={'1h':'Last hour','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'}[params.get('window')] || 'Last 24 hours';
-    $('activity-summary').textContent=num(d.total)+' matching events · '+windowLabel+' · Latest first';
+    $('activity-summary').textContent=num(d.total)+' matching events · '+windowLabel+' · '+(params.get('sort')==='slowest'?'HTTP slowest first':params.get('sort')==='fastest'?'HTTP fastest first':'Latest first');
   }
   function freshness() {
     if($('freshness').dataset.stale==='true')return;

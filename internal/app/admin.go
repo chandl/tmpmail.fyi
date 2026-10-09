@@ -244,7 +244,7 @@ func adminRank(ctx context.Context, db *sql.DB, table, column string, lo, hi int
 	return result, rows.Err()
 }
 
-const adminDeliverySelect = `SELECT id,'delivery' kind,timestamp,recipient,sender,sender_domain,ip,size,'' user_agent,'' route,'' method,0 status,0 duration_ms,'' message_id,0 polling FROM deliveries`
+const adminDeliverySelect = `SELECT id,'delivery' kind,timestamp,recipient,sender,sender_domain,ip,size,'' user_agent,'' route,'' method,250 status,0 duration_ms,'' message_id,0 polling FROM deliveries`
 const adminHTTPSelect = `SELECT id,'http' kind,timestamp,recipient,'' sender,'' sender_domain,ip,0 size,user_agent,route,method,status,duration_ms,message_id,polling FROM http_requests`
 
 func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
@@ -258,6 +258,27 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 	if kind != "" && kind != "delivery" && kind != "http" && kind != "httpPoll" && kind != "httpOther" {
 		adminError(w, 400, "Invalid activity type")
 		return
+	}
+	order := `timestamp DESC,id DESC,kind DESC`
+	sortBy := q.Get("sort")
+	switch sortBy {
+	case "", "latest":
+	case "slowest":
+		order = `duration_ms DESC,timestamp DESC,id DESC,kind DESC`
+	case "fastest":
+		order = `duration_ms ASC,timestamp DESC,id DESC,kind DESC`
+	default:
+		adminError(w, 400, "Invalid sort order")
+		return
+	}
+	status := 0
+	if v := q.Get("status"); v != "" {
+		var err error
+		status, err = strconv.Atoi(v)
+		if err != nil || status < 100 || status > 599 {
+			adminError(w, 400, "Response code must be between 100 and 599")
+			return
+		}
 	}
 	offset := 0
 	if v := q.Get("offset"); v != "" {
@@ -283,6 +304,13 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	where := ` WHERE timestamp>=? AND timestamp<=?`
 	args := []any{now.Add(-window).UnixMilli(), now.UnixMilli()}
+	if status != 0 {
+		where += ` AND status=?`
+		args = append(args, status)
+	}
+	if sortBy == "slowest" || sortBy == "fastest" {
+		where += ` AND kind='http'`
+	}
 	if kind == "httpPoll" {
 		where += ` AND polling=1`
 	} else if kind == "httpOther" {
@@ -346,7 +374,7 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	args = append(args, adminPageSize+1, offset)
-	rows, err := tx.QueryContext(ctx, `SELECT * FROM (`+union+`)`+where+` ORDER BY timestamp DESC,id DESC,kind DESC LIMIT ? OFFSET ?`, args...)
+	rows, err := tx.QueryContext(ctx, `SELECT * FROM (`+union+`)`+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		adminError(w, 503, "Analytics query unavailable; retry shortly.")
 		return

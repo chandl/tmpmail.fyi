@@ -185,3 +185,5 @@
 @media(max-width:560px) { .field-filters { grid-template-columns:1fr; } }
 .admin-activity-page .filter-actions { margin-left:auto; }
 .admin-activity-page .filter-pending { order:3; }
+
+@media(max-width:560px) { .admin-activity-page .admin-filters>label { flex:1 1 calc(50% - 10px); } .admin-activity-page .admin-filters>label input { width:100%; min-width:0; } }
