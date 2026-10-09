@@ -42,14 +42,16 @@ func newRateLimiter(rps float64, burst int) *limiter.Limiter {
 // burst). When ipHeader is set (for example "CF-Connecting-IP"), the client IP is read from
 // that header instead of RemoteAddr, since every request otherwise arrives from the same
 // reverse-proxy address. Only enable this for a header a trusted proxy actually sets/overwrites
-// itself.
+// itself. Liveness probes bypass the per-client bucket but still pass through
+// the downstream handler, including global admission limits.
 func rateLimitPerIP(next http.Handler, rps float64, burst int, ipHeader string) http.Handler {
 	limited := tollbooth.LimitHandler(newRateLimiter(rps, burst), next)
-	if ipHeader == "" {
-		return limited
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if ip := firstHeaderValue(r.Header.Get(ipHeader)); ip != "" {
+		if r.URL.Path == "/healthz" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if ip := firstHeaderValue(r.Header.Get(ipHeader)); ipHeader != "" && ip != "" {
 			clone := r.Clone(r.Context())
 			clone.RemoteAddr = net.JoinHostPort(ip, "0")
 			r = clone
