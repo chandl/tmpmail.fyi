@@ -116,11 +116,11 @@
     if(!activity) {
       const cards=[
         ['Process','Running',false,[['Uptime',duration(s.uptimeSeconds)],['Heap',bytes(s.memoryBytes)],['Goroutines',num(s.goroutines)]]],
-        ['SMTP',`${num(smtp.activeConnections)} / ${num(smtp.connectionLimit)}`,smtp.tlsEnabled && new Date(smtp.tlsNotAfter)<new Date(),[['Connections','Active / limit'],['TLS',smtp.tlsEnabled?'Enabled':'Off'],['Certificate',smtp.tlsEnabled?date(smtp.tlsNotAfter):'—']]],
+        ['SMTP',`${num(smtp.activeConnections)} / ${num(smtp.connectionLimit)}`,smtp.tlsEnabled && new Date(smtp.tlsNotAfter)<new Date(),[['TLS',smtp.tlsEnabled?'Enabled':'Off'],...(smtp.tlsEnabled?[['Expires',shortDate(smtp.tlsNotAfter)]]:[])]],
         ['Mail',bytes(store.storedBytes),false,[['Budget',bytes(s.messageStorageBudgetBytes)],['Messages',num(store.storedMessages)]]],
-        ['Cleanup',store.cleanupErrors?num(store.cleanupErrors)+' errors':'OK',store.cleanupErrors>0,[['Last run',store.lastCleanup?date(store.lastCleanup):'Not yet'],['Errors',num(store.cleanupErrors)]]],
-        ['Analytics',a.available?'Connected':'Unavailable',!a.available,[['Storage / budget',`${bytes(a.storageBytes)} / ${bytes(s.storageBudgetBytes)}`],['Retention',num(s.retentionHours/24)+' days'],['History from',date(first)],['Early evictions',num(a.earlyEvictedEvents)]]],
-        ['Ingestion',a.available?Number(a.lagSeconds || 0).toFixed(1)+'s behind':'Unavailable',!a.available || a.lagSeconds>30 || a.droppedEvents>0,[['Last batch',a.lastIngested?date(a.lastIngested):'None yet'],['Dropped events',num(a.droppedEvents)],['Write errors',num(a.writeErrors)]]]
+        ['Cleanup',store.cleanupErrors?num(store.cleanupErrors)+' errors':'OK',store.cleanupErrors>0,[['Last run',store.lastCleanup?clock(store.lastCleanup):'Not yet'],['Errors',num(store.cleanupErrors)]]],
+        ['Analytics',a.available?'Connected':'Unavailable',!a.available,[['Storage',bytes(a.storageBytes)],['Budget',bytes(s.storageBudgetBytes)],['Retention',num(s.retentionHours/24)+' days'],['History from',first?shortDate(first):'None'],['Early evictions',num(a.earlyEvictedEvents)]]],
+        ['Ingestion',a.available?Number(a.lagSeconds || 0).toFixed(1)+'s behind':'Unavailable',!a.available || a.lagSeconds>30 || a.droppedEvents>0,[['Last batch',a.lastIngested?clock(a.lastIngested):'None yet'],['Dropped events',num(a.droppedEvents)],['Write errors',num(a.writeErrors)]]]
       ];
       const target=$('system-metrics');target.replaceChildren();
       for(const [label,value,warn,pairs] of cards) {
@@ -128,7 +128,7 @@
         const heading=node('div',undefined,'system-metric-heading');
         heading.append(node('h2',label),node('strong',value));card.append(heading);
         const dl=node('dl');
-        for(const [key,detail] of pairs) {const row=node('div');row.append(node('dt',key),node('dd',detail));dl.append(row);}
+        for(const [key,detail] of pairs) {const row=node('div');const value=node('dd',detail);const timestamp={'Last run':store.lastCleanup,'Last batch':a.lastIngested,'History from':first,'Expires':smtp.tlsNotAfter}[key];value.title=timestamp?date(timestamp):detail;row.append(node('dt',key),value);dl.append(row);}
         card.append(dl);target.append(card);
       }
       target.title='Counters reset on process restart. Analytics storage counts live SQLite pages and WAL; history may expire or be evicted early.';
