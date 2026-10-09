@@ -174,8 +174,13 @@ func TestPrivacyPageExplainsMessageHandling(t *testing.T) {
 	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/privacy", nil))
 
 	page := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(page, "Disposable email") || !strings.Contains(page, "Privacy and message handling") || !strings.Contains(page, "automatically deleted after one hour by default") || !strings.Contains(page, "does not include advertising or analytics trackers") {
+	if response.Code != http.StatusOK || !strings.Contains(page, "Disposable email") || !strings.Contains(page, "Privacy and message handling") || !strings.Contains(page, "automatically deleted after one hour by default") || !strings.Contains(page, "does not include advertising or third-party analytics trackers") {
 		t.Fatalf("expected privacy details page, got status=%d body=%q", response.Code, page)
+	}
+	for _, disclosure := range []string{"Service activity and analytics", "When analytics is enabled", "they are not anonymous", "up to 30 days", "does not immediately delete its separate activity record", "Analytics records do not include message subjects"} {
+		if !strings.Contains(page, disclosure) {
+			t.Fatalf("missing analytics privacy disclosure: %s", disclosure)
+		}
 	}
 }
 
