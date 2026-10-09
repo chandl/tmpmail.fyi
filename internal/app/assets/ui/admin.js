@@ -59,7 +59,7 @@
     if(params.get('search'))filters.push(['search','Search: '+params.get('search')]);
     for(const key of [...fieldKeys,'callerIP'])if(params.has(key))filters.push([key,labels[key]+': '+(params.get(key) || '(empty)')]);
     for(const [key,label] of filters) {
-      const chip=node('button',undefined,'filter-chip');chip.type='button';chip.title=label;
+      const chip=node('button',undefined,'btn btn-secondary btn-sm filter-chip');chip.type='button';chip.title=label;
       chip.setAttribute('aria-label','Remove filter: '+label);chip.append(node('span',label),node('span','×','chip-remove'));
       chip.addEventListener('click',()=>{params.delete(key);offset=0;syncFilters();filterChips();resetActivityScroll();refresh();});target.append(chip);
     }
@@ -233,7 +233,7 @@
       const result=node('td',undefined,'event-result');
       if(e.kind==='delivery') {result.textContent=bytes(e.size);result.title='Accepted recipient delivery · '+bytes(e.size);}
       else {result.append(node('span',e.status,'event-status'+(e.status>=400?' error':'')),node('span',' · '+Number(e.durationMs).toFixed(1)+' ms','result-duration'));}
-      const action=node('td',undefined,'event-action'),toggle=node('button','›','event-expand');toggle.type='button';toggle.setAttribute('aria-label','Details for '+e.kind+' event at '+date(e.timestamp));
+      const action=node('td',undefined,'event-action'),toggle=node('button','›','icon-btn event-expand');toggle.type='button';toggle.setAttribute('aria-label','Details for '+e.kind+' event at '+date(e.timestamp));
       const expanded=node('tr',undefined,'event-expanded'),cell=node('td');cell.colSpan=7;cell.append(eventMetadata(e));expanded.append(cell);
       // Index-based DOM IDs avoid embedding untrusted event IDs into selector syntax.
       expanded.id='event-detail-'+target.children.length;toggle.setAttribute('aria-controls',expanded.id);

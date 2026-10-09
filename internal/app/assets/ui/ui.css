@@ -171,7 +171,7 @@ kbd{display:inline-block;min-width:1.6em;padding:0 5px;border:1px solid var(--bo
 .pagination>:first-child{justify-self:start}
 .pagination>:last-child{justify-self:end}
 .page-label{color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
-.btn.is-disabled{opacity:.45;cursor:default;pointer-events:none}
+.btn.is-disabled,.btn:disabled{opacity:.45;cursor:default;pointer-events:none}
 
 .reader-pane{min-width:0;min-height:0;overflow-y:auto;overscroll-behavior:contain}
 .back-button{display:none}
