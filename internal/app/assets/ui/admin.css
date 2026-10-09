@@ -9,6 +9,8 @@
 .freshness { font-size:12px; color:var(--muted); min-width:92px; text-align:right; font-variant-numeric:tabular-nums; }
 .live-toggle { gap:6px; }
 .live-toggle[aria-pressed="false"] .live-dot::before { background:var(--muted); }
+.live-toggle.connection-error { color:var(--danger); border-color:var(--danger); }
+.live-toggle.connection-error .live-dot::before { background:var(--danger); }
 .refresh-btn[aria-busy="true"] svg { animation:refresh-spin 1s linear infinite; }
 @keyframes refresh-spin { to { transform:rotate(360deg); } }
 .admin-filters { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }

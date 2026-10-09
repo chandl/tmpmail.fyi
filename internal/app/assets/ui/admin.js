@@ -10,6 +10,7 @@
   const REFRESH_MS = 5000;
   let offset = Number(params.get('offset')) || 0, hasMore = false, busy = false;
   let lastSuccess = null, live = true, requestVersion = 0, controller, chartData;
+  let liveFailure = '';
   const expandedEvents = new Set();
   const num = n => Number(n || 0).toLocaleString();
   const bytes = n => n >= 1073741824 ? (n / 1073741824).toFixed(2) + ' GiB' : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MiB' : n >= 1024 ? (n / 1024).toFixed(1) + ' KiB' : num(n) + ' B';
@@ -263,6 +264,13 @@
       $('freshness').title='Last query snapshot: '+date(lastSuccess);
     }
   }
+  function liveIndicator() {
+    const toggle=$('live-toggle');
+    toggle.classList.toggle('connection-error',Boolean(liveFailure));
+    $('live-label').textContent=liveFailure ? liveFailure+' · '+(live?'retrying':'paused') : live?'Live · 5s':'Paused';
+    toggle.title=liveFailure ? (live?'Updates unavailable. Retrying every 5 seconds. Click to pause retries.':'Updates unavailable. Click to resume retries.') : live?'Refreshes every 5 seconds. Click to pause.':'Click to resume live updates.';
+    toggle.setAttribute('aria-label',$('live-label').textContent+'. '+toggle.title);
+  }
   async function refresh() {
     const version=++requestVersion;
     controller?.abort();
@@ -281,11 +289,13 @@
       if(data.status==='rejected')throw data.reason;
       activity?events(data.value):overview(data.value);
       lastSuccess=data.value.generatedAt;$('freshness').dataset.stale='false';freshness();notice(warnings);
+      liveFailure=status.status==='fulfilled'?'':'Status unavailable';liveIndicator();
     } catch(err) {
       if(version!==requestVersion)return;
       const message=err.name==='AbortError' ? 'Refresh timed out.' : err instanceof TypeError ? 'Cannot reach the service.' : err.message;
       notice(message+(lastSuccess?' Showing the last snapshot.':''));
       $('freshness').dataset.stale='true';$('freshness').textContent=lastSuccess?'Stale data':'Unavailable';
+      liveFailure=err instanceof TypeError?'Offline':err.name==='AbortError'?'Timed out':'Refresh failed';liveIndicator();
       if(!lastSuccess&&activity)eventEmpty('Activity unavailable. Try Refresh.');
     } finally {
       clearTimeout(timeout);
@@ -299,14 +309,14 @@
   } else form.elements.window.addEventListener('change',applyFilters);
   $('refresh').addEventListener('click',refresh);
   $('live-toggle').addEventListener('click',()=>{
-    live=!live;$('live-toggle').setAttribute('aria-pressed',String(live));$('live-label').textContent=live?'Live · 5s':'Paused';
+    live=!live;$('live-toggle').setAttribute('aria-pressed',String(live));liveIndicator();
     if(live)refresh();
   });
   $('previous').addEventListener('click',()=>{offset=Math.max(0,offset-50);resetActivityScroll();refresh();});
   $('next').addEventListener('click',()=>{if(hasMore){offset+=50;resetActivityScroll();refresh();}});
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&live)refresh();});
   if(!activity)new ResizeObserver(()=>drawChart(chartData)).observe($('chart'));
-  refresh();
+  liveIndicator();refresh();
   setInterval(()=>{if(!document.hidden&&live&&!busy)refresh();},REFRESH_MS);
   setInterval(()=>{if(!document.hidden)freshness();},1000);
 })();
