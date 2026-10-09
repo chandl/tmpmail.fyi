@@ -129,6 +129,11 @@ keep their existing roles. The two admin pages are **Overview** and **Activity**
 process/runtime, SMTP capacity and TLS, mail storage and cleanup, delivery/request
 counts, traffic buckets, rankings, and a filtered, paginated metadata log.
 
+The dashboard refreshes every five seconds while visible. Use the Live control
+to pause updates or Refresh to fetch a new snapshot manually. Traffic uses labeled
+count/time axes and per-interval details. Runtime and analytics details expand
+below the main view; Activity keeps raw user agents behind individual disclosures.
+
 Admin access has **no application authentication**. A separate port is only a
 network boundary: keep it private using loopback, a private network, or an SSH
 tunnel. For Docker, set `ADMIN_ADDR=:8081` inside the container and uncomment only
