@@ -17,8 +17,8 @@
 .admin-filters label { display:flex; }
 .admin-filters select,.admin-filters input { min-height:38px; border:1px solid var(--border-strong); border-radius:10px; padding:7px 12px; background:var(--surface); color:var(--text-2); font:inherit; font-size:13px; }
 .admin-filters select { cursor:pointer; }
-.search-label { flex:1; min-width:220px; }
-.search-label input { width:100%; }
+.field-filter { flex:1 1 180px; min-width:0; }
+.field-filter input { width:100%; min-width:0; }
 .header-nav a[aria-current] { background:var(--accent-soft); color:var(--accent); }
 .admin-notice { padding:10px 14px; border:1px solid var(--border-strong); background:var(--surface); border-radius:10px; margin:16px 0; color:var(--danger); font-size:13px; }
 .admin-counts { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin:20px 0; }
@@ -145,15 +145,15 @@
   .panel-heading { gap:8px; }
   .admin-chart { min-height:245px; }
   .traffic-panel { padding-bottom:0; }
-  .search-label { min-width:100%; order:2; }
+  .field-filter { flex-basis:100%; }
   .admin-filters select,.admin-filters input { font-size:16px; min-height:42px; max-width:100%; }
   .admin-filters>button { order:3; }
   .service-strip { gap:10px 18px; }
   .system-details>summary span { display:none; }
   .admin-activity-page .admin-filters { padding:12px; gap:10px; }
-  .admin-activity-page .admin-filters>label:not(.search-label) { flex:1; min-width:0; }
+  .admin-activity-page .admin-filters>label:not(.field-filter) { flex:1; min-width:0; }
   .admin-activity-page .admin-filters select { min-width:0; width:100%; }
-  .admin-activity-page .search-label { order:0; }
+  .admin-activity-page .field-filter { flex:1 1 100%; }
   .filter-actions { width:100%; }
   .filter-actions .btn { flex:1; }
   .activity-panel { padding:0; }
@@ -162,3 +162,9 @@
   .activity-table { min-width:1040px; }
 }
 @media(prefers-reduced-motion:reduce) { .refresh-btn[aria-busy="true"] svg { animation:none; } }
+
+.field-filters { order:2; width:100%; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; }
+@media(max-width:900px) { .field-filters { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media(max-width:560px) { .field-filters { grid-template-columns:1fr; } }
+.admin-activity-page .filter-actions { margin-left:auto; }
+.admin-activity-page .filter-pending { order:3; }

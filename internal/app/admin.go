@@ -275,7 +275,7 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	where := ` WHERE timestamp>=? AND timestamp<=?`
 	args := []any{now.Add(-window).UnixMilli(), now.UnixMilli()}
-	for _, f := range []struct{ param, column string }{{"recipient", "recipient"}, {"senderDomain", "sender_domain"}, {"callerIP", "ip"}} {
+	for _, f := range []struct{ param, column string }{{"recipient", "recipient"}, {"senderDomain", "sender_domain"}, {"callerIP", "ip"}, {"sourceIP", "ip"}} {
 		v := q.Get(f.param)
 		if len(v) > 320 {
 			adminError(w, 400, "Filter is too long")
@@ -289,6 +289,22 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 			}
 			if f.param == "senderDomain" {
 				where += ` AND kind='delivery'`
+			}
+		}
+	}
+	for _, f := range []struct{ param, column string }{{"sender", "sender"}, {"userAgent", "user_agent"}} {
+		v := q.Get(f.param)
+		if len(v) > 320 {
+			adminError(w, 400, "Filter is too long")
+			return
+		}
+		if v != "" {
+			where += ` AND ` + f.column + ` LIKE ? ESCAPE '\'`
+			args = append(args, "%"+strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(v)+"%")
+			if f.param == "sender" {
+				where += ` AND kind='delivery'`
+			} else {
+				where += ` AND kind='http'`
 			}
 		}
 	}

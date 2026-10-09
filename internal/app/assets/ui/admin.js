@@ -4,6 +4,8 @@
   const params = new URLSearchParams(location.search);
   const activity = location.pathname === '/activity';
   const form = $('filters');
+  const fieldKeys = ['recipient','sender','senderDomain','sourceIP','userAgent'];
+  const filterKeys = ['kind','search','callerIP',...fieldKeys];
   const REFRESH_MS = 5000;
   let offset = Number(params.get('offset')) || 0, hasMore = false, busy = false;
   let lastSuccess = null, live = true, requestVersion = 0, controller, chartData;
@@ -35,25 +37,25 @@
   function syncFilters() {
     form.elements.window.value=params.get('window') || '24h';
     form.elements.kind.value=params.get('kind') || '';
-    form.elements.search.value=params.get('search') || '';
+    for(const key of fieldKeys) {form.elements[key].value=params.get(key) || '';form.elements[key].dataset.emptyExact=String(params.has(key)&&params.get(key)==='');}
     pendingFilters();
   }
   function pendingFilters() {
     if(!activity)return;
-    const dirty=form.elements.window.value!==(params.get('window') || '24h') || form.elements.kind.value!==(params.get('kind') || '') || form.elements.search.value.trim()!==(params.get('search') || '');
+    const dirty=form.elements.window.value!==(params.get('window') || '24h') || form.elements.kind.value!==(params.get('kind') || '') || fieldKeys.some(key=>form.elements[key].value.trim()!==(params.get(key) || ''));
     $('filter-pending').hidden=!dirty;
-    $('clear-filters').disabled=!dirty&&!['kind','search','recipient','senderDomain','callerIP'].some(key=>params.has(key))&&(params.get('window') || '24h')==='24h';
+    $('clear-filters').disabled=!dirty&&!filterKeys.some(key=>params.has(key))&&(params.get('window') || '24h')==='24h';
   }
   function filterChips() {
     const target=$('exact-filter');target.replaceChildren();
     if(!activity) {target.hidden=true;return;}
     const windows={'1h':'Last hour','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'};
-    const labels={recipient:'Inbox',senderDomain:'Sender domain',callerIP:'HTTP caller IP'};
+    const labels={recipient:'Inbox (exact)',sender:'SMTP sender contains',senderDomain:'Sender domain (exact)',sourceIP:'IP address (exact)',userAgent:'HTTP user agent contains',callerIP:'HTTP caller IP (exact)'};
     const filters=[];
     if(params.get('window')&&params.get('window')!=='24h')filters.push(['window',windows[params.get('window')] || params.get('window')]);
     if(params.get('kind'))filters.push(['kind',params.get('kind')==='delivery'?'SMTP Deliveries':'HTTP requests']);
     if(params.get('search'))filters.push(['search','Search: '+params.get('search')]);
-    for(const key of ['recipient','senderDomain','callerIP'])if(params.has(key))filters.push([key,labels[key]+': '+(params.get(key) || '(empty)')]);
+    for(const key of [...fieldKeys,'callerIP'])if(params.has(key))filters.push([key,labels[key]+': '+(params.get(key) || '(empty)')]);
     for(const [key,label] of filters) {
       const chip=node('button',undefined,'filter-chip');chip.type='button';chip.title=label;
       chip.setAttribute('aria-label','Remove filter: '+label);chip.append(node('span',label),node('span','×','chip-remove'));
@@ -73,7 +75,8 @@
   function resetActivityScroll() { if(activity)document.querySelector('.activity-table-wrap').scrollTop=0; }
   function applyFilters() {
     params.set('window',form.elements.window.value);
-    for(const key of ['kind','search']) {const value=form.elements[key].value.trim();value ? params.set(key,value) : params.delete(key);}
+    for(const key of ['kind',...fieldKeys]) {const value=form.elements[key].value.trim();if(value)params.set(key,value);else if(form.elements[key].dataset.emptyExact!=='true')params.delete(key);}
+    params.delete('search');
     offset=0;syncFilters();filterChips();resetActivityScroll();refresh();
   }
   syncFilters();filterChips();navigation();
@@ -195,7 +198,7 @@
   function overview(d) {
     $('counts').replaceChildren(count('SMTP Deliveries',d.deliveries,'Per accepted recipient'),count('Recipients',d.recipients,'Distinct inboxes receiving mail'),count('HTTP requests',d.requests,`${num(d.polling)} polling · ${num(d.requests-d.polling)} other`),count('Caller IPs',d.callers,'Distinct HTTP caller IPs'));
     $('counts').setAttribute('aria-busy','false');
-    ranking('inboxes',d.inboxes,'recipient','delivery');ranking('senders',d.senderDomains,'senderDomain','delivery');ranking('callers',d.httpCallers,'callerIP','http');
+    ranking('inboxes',d.inboxes,'recipient','delivery');ranking('senders',d.senderDomains,'senderDomain','delivery');ranking('callers',d.httpCallers,'sourceIP','http');
     chartData=d;drawChart(d);
   }
   function eventEmpty(text) {
@@ -284,8 +287,8 @@
   }
   form.addEventListener('submit',e=>{e.preventDefault();applyFilters();});
   if(activity) {
-    form.addEventListener('input',pendingFilters);form.addEventListener('change',pendingFilters);
-    $('clear-filters').addEventListener('click',()=>{for(const key of ['kind','search','recipient','senderDomain','callerIP'])params.delete(key);params.set('window','24h');offset=0;syncFilters();filterChips();resetActivityScroll();refresh();});
+    form.addEventListener('input',e=>{if(fieldKeys.includes(e.target.name))e.target.dataset.emptyExact='false';pendingFilters();});form.addEventListener('change',pendingFilters);
+    $('clear-filters').addEventListener('click',()=>{for(const key of filterKeys)params.delete(key);params.set('window','24h');offset=0;syncFilters();filterChips();resetActivityScroll();refresh();});
   } else form.elements.window.addEventListener('change',applyFilters);
   $('refresh').addEventListener('click',refresh);
   $('live-toggle').addEventListener('click',()=>{

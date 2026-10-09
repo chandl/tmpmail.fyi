@@ -133,7 +133,8 @@ The dashboard refreshes every five seconds while visible. Use the Live control
 to pause updates or Refresh to fetch a new snapshot manually. Traffic uses labeled
 count/time axes and per-interval details. Runtime and analytics details expand
 below the main view. Activity uses compact table rows with expandable metadata.
-Its labeled filters apply only when submitted; removable chips show active filters,
+Its field filters distinguish exact inbox/domain/IP matches from sender/user-agent
+text matches and apply only when submitted; removable chips show active filters,
 and Clear all restores the default view. Live refresh preserves unapplied edits.
 
 Admin access has **no application authentication**. A separate port is only a

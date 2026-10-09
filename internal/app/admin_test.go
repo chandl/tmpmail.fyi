@@ -115,7 +115,7 @@ func TestAdminActivityFiltersPaginationAndLiteralSearch(t *testing.T) {
 	if len(out.Events) != 5 || out.HasMore || out.Events[0].ID != "d004" {
 		t.Fatalf("incorrect second page: %+v", out)
 	}
-	for _, path := range []string{"/api/activity?callerIP=203.0.113.1", "/api/activity?search=100%25_", "/api/activity?kind=http&recipient=a%40mail.test"} {
+	for _, path := range []string{"/api/activity?callerIP=203.0.113.1", "/api/activity?search=100%25_", "/api/activity?userAgent=100%25_&sourceIP=203.0.113.1", "/api/activity?kind=http&recipient=a%40mail.test"} {
 		adminGet(t, h, path, &out)
 		if len(out.Events) != 1 || out.Events[0].ID != "h1" {
 			t.Fatalf("incorrect filter %s: %+v", path, out)
@@ -125,12 +125,24 @@ func TestAdminActivityFiltersPaginationAndLiteralSearch(t *testing.T) {
 	if len(out.Events) != 1 || out.Events[0].ID != "different" {
 		t.Fatalf("sender drilldown: %+v", out)
 	}
+	adminGet(t, h, "/api/activity?sender=other&sourceIP=203.0.113.2", &out)
+	if len(out.Events) != 1 || out.Events[0].ID != "different" {
+		t.Fatalf("combined sender and IP filter: %+v", out)
+	}
+	adminGet(t, h, "/api/activity?sourceIP=203.0.113.2", &out)
+	if len(out.Events) != 2 {
+		t.Fatalf("IP must match SMTP and HTTP: %+v", out)
+	}
+	adminGet(t, h, "/api/activity?sender=other&userAgent=ordinary", &out)
+	if len(out.Events) != 0 {
+		t.Fatalf("field filters must combine with AND: %+v", out)
+	}
 	seedAdminDelivery(t, a, "empty", now, "empty@mail.test", "", "", "192.0.2.1")
 	adminGet(t, h, "/api/activity?senderDomain=", &out)
 	if len(out.Events) != 1 || out.Events[0].ID != "empty" {
 		t.Fatalf("empty sender domain drilldown: %+v", out)
 	}
-	for _, path := range []string{"/api/activity?offset=-1", "/api/activity?offset=10001", "/api/activity?kind=bad", "/api/overview?window=90d", "/api/activity?search=" + strings.Repeat("x", 257)} {
+	for _, path := range []string{"/api/activity?sender=" + strings.Repeat("x", 321), "/api/activity?userAgent=" + strings.Repeat("x", 321), "/api/activity?sourceIP=" + strings.Repeat("x", 321), "/api/activity?offset=-1", "/api/activity?offset=10001", "/api/activity?kind=bad", "/api/overview?window=90d", "/api/activity?search=" + strings.Repeat("x", 257)} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 400 {
