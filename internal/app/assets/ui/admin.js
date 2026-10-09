@@ -25,35 +25,57 @@
     if (!response.ok) throw new Error(data.error || 'Data unavailable');
     return data;
   }
+  document.body.classList.toggle('admin-activity-page',activity);
+  $('activity-time-heading').textContent='Time · '+zone;
   $('page-title').textContent = activity ? 'Activity' : 'Overview';
   $('overview').hidden = activity; $('activity').hidden = !activity;
   document.querySelectorAll('.activity-filter').forEach(e => e.hidden = !activity);
   document.querySelector(`[data-page="${activity ? 'activity' : 'overview'}"]`).setAttribute('aria-current', 'page');
-  for (const key of ['window', 'kind', 'search']) if (params.has(key)) form.elements[key].value = params.get(key);
-  for (const key of ['recipient','senderDomain','callerIP']) if (activity && params.has(key)) {
-    $('exact-filter').hidden = false;
-    const labels = {recipient:'Inbox',senderDomain:'Sender domain',callerIP:'HTTP caller'};
-    $('exact-filter').append(node('span', `${labels[key]}: ${params.get(key) || '(empty)'}`));
+  function syncFilters() {
+    form.elements.window.value=params.get('window') || '24h';
+    form.elements.kind.value=params.get('kind') || '';
+    form.elements.search.value=params.get('search') || '';
+    pendingFilters();
   }
-  if (!$('exact-filter').hidden) {
-    const clear = node('a','Clear');
-    const remaining = new URLSearchParams(params);
-    for(const key of ['recipient','senderDomain','callerIP','offset']) remaining.delete(key);
-    clear.href = '/activity?' + remaining; $('exact-filter').append(clear);
+  function pendingFilters() {
+    if(!activity)return;
+    const dirty=form.elements.window.value!==(params.get('window') || '24h') || form.elements.kind.value!==(params.get('kind') || '') || form.elements.search.value.trim()!==(params.get('search') || '');
+    $('filter-pending').hidden=!dirty;
+    $('clear-filters').disabled=!dirty&&!['kind','search','recipient','senderDomain','callerIP'].some(key=>params.has(key))&&(params.get('window') || '24h')==='24h';
+  }
+  function filterChips() {
+    const target=$('exact-filter');target.replaceChildren();
+    if(!activity) {target.hidden=true;return;}
+    const windows={'1h':'Last hour','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'};
+    const labels={recipient:'Inbox',senderDomain:'Sender domain',callerIP:'HTTP caller IP'};
+    const filters=[];
+    if(params.get('window')&&params.get('window')!=='24h')filters.push(['window',windows[params.get('window')] || params.get('window')]);
+    if(params.get('kind'))filters.push(['kind',params.get('kind')==='delivery'?'Deliveries':'HTTP requests']);
+    if(params.get('search'))filters.push(['search','Search: '+params.get('search')]);
+    for(const key of ['recipient','senderDomain','callerIP'])if(params.has(key))filters.push([key,labels[key]+': '+(params.get(key) || '(empty)')]);
+    for(const [key,label] of filters) {
+      const chip=node('button',undefined,'filter-chip');chip.type='button';chip.title=label;
+      chip.setAttribute('aria-label','Remove filter: '+label);chip.append(node('span',label),node('span','×','chip-remove'));
+      chip.addEventListener('click',()=>{params.delete(key);offset=0;syncFilters();filterChips();resetActivityScroll();refresh();});target.append(chip);
+    }
+    target.hidden=!filters.length;
   }
   function navigation() {
-    const saved = new URLSearchParams(params); saved.set('window',form.elements.window.value); saved.delete('offset');
+    const saved = new URLSearchParams(params); if(!saved.has('window'))saved.set('window','24h'); saved.delete('offset');
     document.querySelectorAll('[data-page]').forEach(a => {a.href = new URL(a.href).pathname + '?' + saved;});
   }
-  navigation();
   function updateURL() {
-    params.set('window', form.elements.window.value);
-    if (activity) {
-      for (const key of ['kind','search']) { const value = form.elements[key].value; value ? params.set(key,value) : params.delete(key); }
-      params.set('offset',String(offset));
-    }
-    history.replaceState(null,'',location.pathname + '?' + params); navigation();
+    if(!params.has('window'))params.set('window','24h');
+    if(activity)params.set('offset',String(offset));
+    history.replaceState(null,'',location.pathname + '?' + params);navigation();
   }
+  function resetActivityScroll() { if(activity)document.querySelector('.activity-table-wrap').scrollTop=0; }
+  function applyFilters() {
+    params.set('window',form.elements.window.value);
+    for(const key of ['kind','search']) {const value=form.elements[key].value.trim();value ? params.set(key,value) : params.delete(key);}
+    offset=0;syncFilters();filterChips();resetActivityScroll();refresh();
+  }
+  syncFilters();filterChips();navigation();
   function count(label,value,note) {
     const e=node('div',undefined,'admin-count');
     e.append(node('span',label),node('strong',num(value)),node('small',note)); return e;
@@ -175,33 +197,52 @@
     ranking('inboxes',d.inboxes,'recipient','delivery');ranking('senders',d.senderDomains,'senderDomain','delivery');ranking('callers',d.httpCallers,'callerIP','http');
     chartData=d;drawChart(d);
   }
+  function eventEmpty(text) {
+    const row=node('tr'), cell=node('td',text,'admin-empty');cell.colSpan=7;row.append(cell);$('events').replaceChildren(row);
+  }
+  function eventMetadata(e) {
+    const content=node('div',undefined,'event-metadata'), list=node('dl');
+    const pairs=[['Timestamp',date(e.timestamp)],['Event ID',e.id],['Recipient',e.recipient || '—']];
+    if(e.kind==='delivery')pairs.push(['Envelope sender',e.sender || '(empty)'],['Sender domain',e.senderDomain || '(empty)'],['SMTP source IP',e.ip || 'Unknown'],['Size',bytes(e.size)]);
+    else pairs.push(['HTTP caller IP',e.ip || 'Unknown'],['Request',e.method+' '+e.route],['Status',e.status],['Duration',Number(e.durationMs).toFixed(1)+' ms'],['Message ID',e.messageId || '—'],['Polling',e.polling?'Identified UI poll':'Not marked as polling'],['Raw user agent',e.userAgent || '(empty)']);
+    for(const [label,value] of pairs) {const item=node('div');item.append(node('dt',label),node('dd',String(value)));list.append(item);}
+    content.append(list);return content;
+  }
   function events(d) {
     const target=$('events');
     const focusedEvent=target.contains(document.activeElement) ? document.activeElement.closest('[data-event-id]')?.dataset.eventId : null;
+    const scrollWrap=target.closest('.activity-table-wrap'), scrollTop=scrollWrap.scrollTop;
     target.replaceChildren();
-    if(!d.events.length)empty(target,'No matching activity. Try a wider range or clear filters.');
+    if(!d.events.length)eventEmpty('No matching events. Change the time range or clear filters.');
     for(const e of d.events) {
-      const row=node('article',undefined,'admin-event'),time=node('time',eventClock(e.timestamp),'event-time'),kind=node('div',undefined,'event-kind');
-      row.dataset.eventId=e.id;
-      time.dateTime=e.timestamp;time.title=date(e.timestamp);time.append(node('small',shortDate(e.timestamp)));
-      kind.append(node('span',e.kind==='delivery'?'Delivery':e.polling?'HTTP poll':'HTTP','admin-kind '+e.kind));
-      const detail=node('div',undefined,'event-detail'),source=node('div',e.ip || 'Unknown','event-source');
-      source.append(node('small',e.kind==='delivery'?'SMTP source IP':'HTTP caller IP'));
-      if(e.kind==='delivery')detail.append(node('span',e.recipient,'event-primary'),node('span',`${e.sender || '(empty sender)'} · ${bytes(e.size)}`,'event-secondary'));
-      else {
-        const primary=node('span',`${e.method} ${e.route} `,'event-primary');
-        primary.append(node('span',e.status,'event-status'+(e.status>=400?' error':'')));detail.append(primary);
-        detail.append(node('span',`${e.recipient || e.messageId || '—'} · ${Number(e.durationMs).toFixed(1)} ms`,'event-secondary'));
-        const more=node('details');more.open=expandedEvents.has(e.id);
-        more.append(node('summary','User agent'),node('p',e.userAgent || '(empty)'));
-        more.addEventListener('toggle',()=>{more.open ? expandedEvents.add(e.id) : expandedEvents.delete(e.id);});detail.append(more);
-      }
-      row.append(time,kind,detail,source);target.append(row);
+      const row=node('tr',undefined,'admin-event');row.dataset.eventId=e.id;
+      const timeCell=node('td',undefined,'event-time'), time=node('time',shortDate(e.timestamp)+' '+eventClock(e.timestamp));
+      time.dateTime=e.timestamp;time.title=date(e.timestamp);timeCell.append(time);
+      const kind=node('td',undefined,'event-kind');kind.append(node('span',e.kind==='delivery'?'Delivery':e.polling?'HTTP poll':'HTTP','admin-kind '+e.kind));
+      const recipient=node('td',e.recipient || e.messageId || '—','event-recipient');recipient.title=e.recipient || e.messageId || '';
+      const detail=node('td',e.kind==='delivery'?(e.sender || '(empty sender)'):e.method+' '+e.route,'event-detail');detail.title=detail.textContent;
+      const source=node('td',undefined,'event-source'),ip=node('span',e.ip || 'Unknown');source.append(node('span',e.kind==='delivery'?'SMTP':'HTTP','source-label'),ip);source.title=(e.kind==='delivery'?'SMTP source IP: ':'HTTP caller IP: ')+(e.ip || 'Unknown');
+      const result=node('td',undefined,'event-result');
+      if(e.kind==='delivery') {result.textContent=bytes(e.size);result.title='Accepted recipient delivery · '+bytes(e.size);}
+      else {result.append(node('span',e.status,'event-status'+(e.status>=400?' error':'')),node('span',' · '+Number(e.durationMs).toFixed(1)+' ms','result-duration'));}
+      const action=node('td',undefined,'event-action'),toggle=node('button','›','event-expand');toggle.type='button';toggle.setAttribute('aria-label','Details for '+e.kind+' event at '+date(e.timestamp));
+      const expanded=node('tr',undefined,'event-expanded'),cell=node('td');cell.colSpan=7;cell.append(eventMetadata(e));expanded.append(cell);
+      // Index-based DOM IDs avoid embedding untrusted event IDs into selector syntax.
+      expanded.id='event-detail-'+target.children.length;toggle.setAttribute('aria-controls',expanded.id);
+      const setOpen=open=>{expanded.hidden=!open;toggle.setAttribute('aria-expanded',String(open));toggle.title=open?'Hide metadata':'View metadata';};
+      setOpen(expandedEvents.has(e.id));
+      toggle.addEventListener('click',()=>{const open=toggle.getAttribute('aria-expanded')!=='true';open ? expandedEvents.add(e.id) : expandedEvents.delete(e.id);setOpen(open);});
+      action.append(toggle);row.append(timeCell,kind,recipient,detail,source,result,action);target.append(row,expanded);
     }
     for(const id of expandedEvents)if(!d.events.some(e=>e.id===id))expandedEvents.delete(id);
-    if(focusedEvent)Array.from(target.children).find(row=>row.dataset.eventId===focusedEvent)?.querySelector('summary')?.focus({preventScroll:true});
+    if(focusedEvent)Array.from(target.children).find(row=>row.dataset.eventId===focusedEvent)?.querySelector('.event-expand')?.focus({preventScroll:true});
+    scrollWrap.scrollTop=scrollTop;
     hasMore=d.hasMore;$('previous').disabled=offset===0;$('next').disabled=!hasMore;
-    $('page-label').textContent=`${num(offset+(d.events.length?1:0))}–${num(offset+d.events.length)}${offset>=d.offsetLimit?' · limit reached':''}`;
+    const first=offset+(d.events.length?1:0),last=offset+d.events.length;
+    $('page-label').textContent=`Events ${num(first)}–${num(last)}${offset>=d.offsetLimit?' · limit reached':''}`;
+    const type=params.get('kind')==='delivery'?'Deliveries':params.get('kind')==='http'?'HTTP requests':'All events';
+    const windowLabel={'1h':'Last hour','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'}[params.get('window')] || 'Last 24 hours';
+    $('activity-summary').textContent=type+' · '+windowLabel+' · Latest first';
   }
   function freshness() {
     if($('freshness').dataset.stale==='true')return;
@@ -217,7 +258,7 @@
     const activeController=new AbortController();controller=activeController;
     const timeout=setTimeout(()=>activeController.abort(),10000);
     busy=true;$('refresh').setAttribute('aria-busy','true');updateURL();
-    if(!lastSuccess) { $('freshness').textContent='Loading…';if(activity)empty($('events'),'Loading activity…'); }
+    if(!lastSuccess) { $('freshness').textContent='Loading…';if(activity)eventEmpty('Loading activity…'); }
     try {
       const [data,status]=await Promise.allSettled([
         get((activity?'/api/activity':'/api/overview')+'?'+params,activeController.signal),get('/api/status',activeController.signal)
@@ -234,22 +275,24 @@
       const message=err.name==='AbortError' ? 'Refresh timed out.' : err instanceof TypeError ? 'Cannot reach the service.' : err.message;
       notice(message+(lastSuccess?' Showing the last snapshot.':''));
       $('freshness').dataset.stale='true';$('freshness').textContent=lastSuccess?'Stale data':'Unavailable';
-      if(!lastSuccess&&activity)empty($('events'),'Activity unavailable. Try Refresh.');
+      if(!lastSuccess&&activity)eventEmpty('Activity unavailable. Try Refresh.');
     } finally {
       clearTimeout(timeout);
       if(version===requestVersion) {busy=false;$('refresh').setAttribute('aria-busy','false');}
     }
   }
-  form.addEventListener('submit',e=>{e.preventDefault();offset=0;refresh();});
-  form.elements.window.addEventListener('change',()=>{offset=0;refresh();});
-  form.elements.kind.addEventListener('change',()=>{offset=0;refresh();});
+  form.addEventListener('submit',e=>{e.preventDefault();applyFilters();});
+  if(activity) {
+    form.addEventListener('input',pendingFilters);form.addEventListener('change',pendingFilters);
+    $('clear-filters').addEventListener('click',()=>{for(const key of ['kind','search','recipient','senderDomain','callerIP'])params.delete(key);params.set('window','24h');offset=0;syncFilters();filterChips();resetActivityScroll();refresh();});
+  } else form.elements.window.addEventListener('change',applyFilters);
   $('refresh').addEventListener('click',refresh);
   $('live-toggle').addEventListener('click',()=>{
     live=!live;$('live-toggle').setAttribute('aria-pressed',String(live));$('live-label').textContent=live?'Live · 5s':'Paused';
     if(live)refresh();
   });
-  $('previous').addEventListener('click',()=>{offset=Math.max(0,offset-50);refresh();});
-  $('next').addEventListener('click',()=>{if(hasMore){offset+=50;refresh();}});
+  $('previous').addEventListener('click',()=>{offset=Math.max(0,offset-50);resetActivityScroll();refresh();});
+  $('next').addEventListener('click',()=>{if(hasMore){offset+=50;resetActivityScroll();refresh();}});
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&live)refresh();});
   if(!activity)new ResizeObserver(()=>drawChart(chartData)).observe($('chart'));
   refresh();
