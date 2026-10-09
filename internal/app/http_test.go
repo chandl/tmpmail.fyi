@@ -2,10 +2,12 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -528,5 +530,76 @@ func TestBlockedImagesAreCountedAndMarked(t *testing.T) {
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/?inbox=build", nil))
 	if !strings.Contains(page.Body.String(), "Tracking pixel blocked") {
 		t.Fatalf("expected blocked image note in the reader, got %q", page.Body.String())
+	}
+}
+
+func TestInboxRendersOnlyFirstBodyAndKeepsUnavailableSummaries(t *testing.T) {
+	store := testStore(t, time.Hour)
+	older := saveOne(t, store, "build@mail.test", "old@example.org", []byte("Subject: older\r\n\r\nolder-body-not-rendered"))
+	newest := saveOne(t, store, "build@mail.test", "new@example.org", []byte("Subject: newest\r\n\r\nfirst-body-rendered"))
+	// A missing older raw file must not cause the page to skip its summary or
+	// force a read. Selecting it is the only operation that needs that file.
+	var path string
+	if err := store.db.QueryRow(`SELECT path FROM blobs JOIN messages ON messages.blob_id = blobs.id WHERE messages.id = ?`, older.ID).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/?inbox=build", nil))
+	page := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(page, "first-body-rendered") || strings.Contains(page, "older-body-not-rendered") {
+		t.Fatalf("expected only the first body to render: status=%d body=%s", response.Code, page)
+	}
+	for _, want := range []string{`data-message-id="` + newest.ID + `" data-loaded="true"`, `data-message-id="` + older.ID + `" data-loaded="false"`, `data-count>2 messages`, `data-has-more="false"`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("missing %q in page", want)
+		}
+	}
+	for _, suffix := range []string{"", "/html"} {
+		details := httptest.NewRecorder()
+		handler.ServeHTTP(details, httptest.NewRequest(http.MethodGet, "/ui/messages/"+older.ID+suffix, nil))
+		if details.Code != http.StatusInternalServerError {
+			t.Fatalf("missing raw file should be a storage failure, got %d", details.Code)
+		}
+	}
+}
+
+func TestInboxRenderHonorsCanceledRequest(t *testing.T) {
+	store := testStore(t, time.Hour)
+	saveOne(t, store, "build@mail.test", "sender@example.org", []byte("Subject: hello\r\n\r\nbody"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodGet, "/?inbox=build", nil).WithContext(ctx)
+	response := httptest.NewRecorder()
+	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, request)
+	if response.Body.Len() != 0 {
+		t.Fatalf("canceled request rendered a response: %s", response.Body.String())
+	}
+}
+
+func TestInboxRequestedMessageRendersSingleBodyWithFallbackLinks(t *testing.T) {
+	store := testStore(t, time.Hour)
+	older := saveOne(t, store, "build@mail.test", "older@example.org", []byte("Subject: older\r\n\r\nrequested-older-body"))
+	newest := saveOne(t, store, "build@mail.test", "new@example.org", []byte("Subject: newest\r\n\r\ndefault-body-not-rendered"))
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/?inbox=build&message="+older.ID, nil))
+	page := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(page, "requested-older-body") || strings.Contains(page, "default-body-not-rendered") {
+		t.Fatalf("wrong body selection: status=%d body=%s", response.Code, page)
+	}
+	for _, want := range []string{`data-selected-message="` + older.ID + `"`, `data-message-id="` + older.ID + `" data-loaded="true"`, `data-message-id="` + newest.ID + `" data-loaded="false"`, `href="/?inbox=build&amp;message=` + newest.ID + `#m-` + newest.ID + `"`, `data-message-fallback`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("missing %q in page", want)
+		}
+	}
+	// Missing or cross-page selections cannot read arbitrary message bodies.
+	fallback := httptest.NewRecorder()
+	handler.ServeHTTP(fallback, httptest.NewRequest(http.MethodGet, "/?inbox=build&message=missing", nil))
+	if !strings.Contains(fallback.Body.String(), "default-body-not-rendered") || strings.Contains(fallback.Body.String(), "requested-older-body") {
+		t.Fatalf("missing selection should render first body")
 	}
 }

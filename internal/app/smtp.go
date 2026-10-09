@@ -215,6 +215,7 @@ func (s *smtpSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 		}
 		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "unknown recipient domain"}
 	}
+	to = normalizeRecipient(to)
 	if !containsRecipient(s.recipients, to) {
 		s.recipients = append(s.recipients, to)
 	}
@@ -262,6 +263,15 @@ func (s *smtpSession) Data(r io.Reader) error {
 	}
 	observeDelivery(nil)
 	return nil
+}
+
+// normalizeRecipient canonicalizes the case-insensitive domain while preserving
+// the local part, which may be case-sensitive.
+func normalizeRecipient(address string) string {
+	if at := strings.LastIndex(address, "@"); at >= 0 {
+		return address[:at+1] + strings.ToLower(address[at+1:])
+	}
+	return address
 }
 
 func containsRecipient(recipients []string, address string) bool {

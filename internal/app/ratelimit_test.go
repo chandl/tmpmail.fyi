@@ -121,3 +121,54 @@ func TestFirstHeaderValue(t *testing.T) {
 		}
 	}
 }
+
+func TestHealthcheckBypassesExhaustedClientBucket(t *testing.T) {
+	for _, ipHeader := range []string{"", "CF-Connecting-IP"} {
+		t.Run("header="+ipHeader, func(t *testing.T) {
+			calls := 0
+			downstreamStatus := http.StatusNoContent
+			handler := rateLimitPerIP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				w.WriteHeader(downstreamStatus)
+			}), 0.00001, 1, ipHeader)
+			request := func(method, path string) *httptest.ResponseRecorder {
+				r := httptest.NewRequest(method, path, nil)
+				r.RemoteAddr = "127.0.0.1:5555"
+				if ipHeader != "" {
+					r.Header.Set(ipHeader, "203.0.113.42")
+				}
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, r)
+				return w
+			}
+			if got := request(http.MethodGet, "/").Code; got != http.StatusNoContent {
+				t.Fatalf("first request = %d", got)
+			}
+			if got := request(http.MethodGet, "/").Code; got != http.StatusTooManyRequests {
+				t.Fatalf("exhausted bucket = %d", got)
+			}
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				before := calls
+				if got := request(method, "/healthz?probe=1").Code; got != http.StatusNoContent || calls != before+1 {
+					t.Fatalf("%s healthcheck = %d, downstream calls = %d; want 204 and one forwarded call", method, got, calls-before)
+				}
+			}
+			// Bypassing the client bucket must still respect downstream admission.
+			downstreamStatus = http.StatusServiceUnavailable
+			before := calls
+			if got := request(http.MethodGet, "/healthz").Code; got != http.StatusServiceUnavailable || calls != before+1 {
+				t.Fatalf("downstream health failure = %d, calls = %d", got, calls-before)
+			}
+			for _, tc := range []struct{ method, path string }{
+				{http.MethodGet, "/ui/messages/id"},
+				{http.MethodGet, "/healthz/other"},
+				{http.MethodPost, "/healthz"},
+			} {
+				before := calls
+				if got := request(tc.method, tc.path).Code; got != http.StatusTooManyRequests || calls != before {
+					t.Fatalf("%s %s = %d, calls = %d; want rate limit without downstream call", tc.method, tc.path, got, calls-before)
+				}
+			}
+		})
+	}
+}
