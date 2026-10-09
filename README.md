@@ -140,8 +140,9 @@ and SMTP accepted deliveries (250). SMTP rejections recorded by the application
 include connection overload (421), invalid recipient domains (550), oversized DATA
 (552), read failures (554), and storage failures (451). DATA failures are recorded
 per accepted recipient; connection failures may have no sender or recipient.
-Protocol-parser rejections before application callbacks are not recorded. HTTP response
-times can be sorted fastest or slowest first. Live refresh preserves unapplied edits.
+Protocol-parser rejections before application callbacks are not recorded. Response times across HTTP, SMTP deliveries, and SMTP rejections can be sorted
+fastest or slowest first. SMTP delivery duration covers DATA reading and storage,
+shared by recipients in that transaction. Older deliveries without timing sort last. Live refresh preserves unapplied edits.
 
 Admin access has **no application authentication**. A separate port is only a
 network boundary: keep it private using loopback, a private network, or an SSH

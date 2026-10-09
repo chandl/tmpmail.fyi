@@ -153,6 +153,36 @@ func (a *Analytics) Close() error {
 	return nil
 }
 
+// Legacy delivery rows keep NULL timing; zero is a valid measured duration.
+func migrateDeliveryTiming(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(deliveries)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, kind string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "duration_ms" {
+			found = true
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if !found {
+		_, err = db.Exec(`ALTER TABLE deliveries ADD COLUMN duration_ms REAL`)
+	}
+	return err
+}
+
 func (a *Analytics) open() bool {
 	if err := os.MkdirAll(a.cfg.DataDir, 0750); err != nil {
 		a.failure()
@@ -163,7 +193,7 @@ func (a *Analytics) open() bool {
 		db.SetMaxOpenConns(4)
 		db.SetMaxIdleConns(4)
 		for _, q := range []string{
-			`CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,recipient TEXT NOT NULL,sender TEXT NOT NULL,sender_domain TEXT NOT NULL,ip TEXT NOT NULL,size INTEGER NOT NULL)`,
+			`CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,recipient TEXT NOT NULL,sender TEXT NOT NULL,sender_domain TEXT NOT NULL,ip TEXT NOT NULL,size INTEGER NOT NULL,duration_ms REAL)`,
 			`CREATE TABLE IF NOT EXISTS smtp_rejections (id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,recipient TEXT NOT NULL,sender TEXT NOT NULL,sender_domain TEXT NOT NULL,ip TEXT NOT NULL,status INTEGER NOT NULL,duration_ms REAL NOT NULL,stage TEXT NOT NULL)`,
 			`CREATE INDEX IF NOT EXISTS smtp_rejections_time ON smtp_rejections(timestamp DESC,id)`,
 			`CREATE TABLE IF NOT EXISTS http_requests (id TEXT PRIMARY KEY,timestamp INTEGER NOT NULL,recipient TEXT NOT NULL,ip TEXT NOT NULL,user_agent TEXT NOT NULL,route TEXT NOT NULL,method TEXT NOT NULL,status INTEGER NOT NULL,duration_ms REAL NOT NULL,message_id TEXT NOT NULL,polling INTEGER NOT NULL)`,
@@ -177,6 +207,9 @@ func (a *Analytics) open() bool {
 				break
 			}
 		}
+	}
+	if err == nil {
+		err = migrateDeliveryTiming(db)
 	}
 	if err != nil {
 		if db != nil {
@@ -338,7 +371,11 @@ func (a *Analytics) writeBatch(db *sql.DB, events []AnalyticsEvent) error {
 			continue
 		}
 		if e.Kind == "delivery" {
-			_, err = tx.Exec(`INSERT OR IGNORE INTO deliveries(id,timestamp,recipient,sender,sender_domain,ip,size) VALUES(?,?,?,?,?,?,?)`, e.ID, e.Timestamp.UnixMilli(), e.Recipient, e.Sender, e.SenderDomain, e.IP, e.Size)
+			var timing any
+			if e.DurationKnown {
+				timing = e.DurationMS
+			}
+			_, err = tx.Exec(`INSERT OR IGNORE INTO deliveries(id,timestamp,recipient,sender,sender_domain,ip,size,duration_ms) VALUES(?,?,?,?,?,?,?,?)`, e.ID, e.Timestamp.UnixMilli(), e.Recipient, e.Sender, e.SenderDomain, e.IP, e.Size, timing)
 		} else if e.Kind == "smtpRejected" {
 			_, err = tx.Exec(`INSERT OR IGNORE INTO smtp_rejections(id,timestamp,recipient,sender,sender_domain,ip,status,duration_ms,stage) VALUES(?,?,?,?,?,?,?,?,?)`, e.ID, e.Timestamp.UnixMilli(), e.Recipient, e.Sender, e.SenderDomain, e.IP, e.Status, e.DurationMS, e.Route)
 		} else {

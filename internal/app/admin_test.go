@@ -152,7 +152,7 @@ func TestAdminActivityFiltersPaginationAndLiteralSearch(t *testing.T) {
 		t.Fatalf("SMTP accepted status filter: %+v", out)
 	}
 	for _, check := range []struct{ sort, id string }{{"slowest", "h2"}, {"fastest", "h1"}} {
-		adminGet(t, h, "/api/activity?sort="+check.sort, &out)
+		adminGet(t, h, "/api/activity?kind=http&sort="+check.sort, &out)
 		if out.Total != 2 || out.Events[0].ID != check.id {
 			t.Fatalf("HTTP duration sort: %+v", out)
 		}

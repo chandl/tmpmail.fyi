@@ -192,7 +192,7 @@ func TestAnalyticsPersistentWriteFailureDropsBoundedBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec("INSERT INTO deliveries VALUES ('lock', ?, '', '', '', '', 0)", time.Now().UnixMilli()); err != nil {
+	if _, err := tx.Exec("INSERT INTO deliveries(id,timestamp,recipient,sender,sender_domain,ip,size) VALUES ('lock', ?, '', '', '', '', 0)", time.Now().UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	a.Record(AnalyticsEvent{Kind: "delivery", Recipient: "drop@mail.test"})

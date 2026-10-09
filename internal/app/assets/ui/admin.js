@@ -18,6 +18,7 @@
   const shortDate = d => new Date(d).toLocaleDateString(undefined, {month:'short',day:'numeric'});
   const clock = d => new Date(d).toLocaleTimeString(undefined, {hour:'2-digit',minute:'2-digit',hour12:false});
   const eventClock = d => new Date(d).toLocaleTimeString(undefined, {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+  const responseTime = e => e.durationKnown ? Number(e.durationMs).toFixed(1)+' ms' : 'Not recorded';
   const duration = s => s < 3600 ? Math.floor(s / 60) + ' min' : (s / 3600).toFixed(1) + ' h';
   const zone = new Intl.DateTimeFormat(undefined, {timeZoneName:'short'}).formatToParts(new Date()).find(p => p.type === 'timeZoneName')?.value || 'local';
   function node(tag, text, cls) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; }
@@ -58,7 +59,7 @@
     const filters=[];
     if(params.get('window')&&params.get('window')!=='24h')filters.push(['window',windows[params.get('window')] || params.get('window')]);
     if(params.get('kind'))filters.push(['kind',kindLabels[params.get('kind')] || 'All events']);
-    if(params.get('sort')&&params.get('sort')!=='latest')filters.push(['sort',params.get('sort')==='slowest'?'HTTP · slowest first':'HTTP · fastest first']);
+    if(params.get('sort')&&params.get('sort')!=='latest')filters.push(['sort',params.get('sort')==='slowest'?'Response time · slowest first':'Response time · fastest first']);
     if(params.get('search'))filters.push(['search','Search: '+params.get('search')]);
     for(const key of [...fieldKeys,'callerIP'])if(params.has(key))filters.push([key,labels[key]+': '+(params.get(key) || '(empty)')]);
     for(const [key,label] of filters) {
@@ -215,9 +216,9 @@
   function eventMetadata(e) {
     const content=node('div',undefined,'event-metadata'), list=node('dl');
     const pairs=[['Timestamp',date(e.timestamp)],['Event ID',e.id],['Recipient',e.recipient || '—']];
-    if(e.kind==='smtpRejected')pairs.push(['Envelope sender',e.sender || '(empty)'],['Sender domain',e.senderDomain || '(empty)'],['SMTP source IP',e.ip || 'Unknown'],['Stage',e.route],['SMTP result',e.status],['Duration',Number(e.durationMs).toFixed(1)+' ms']);
-    else if(e.kind==='delivery')pairs.push(['Envelope sender',e.sender || '(empty)'],['Sender domain',e.senderDomain || '(empty)'],['SMTP source IP',e.ip || 'Unknown'],['Size',bytes(e.size)],['SMTP result','250 · Accepted']);
-    else pairs.push(['HTTP caller IP',e.ip || 'Unknown'],['Request',e.method+' '+e.route],['Status',e.status],['Duration',Number(e.durationMs).toFixed(1)+' ms'],['Message ID',e.messageId || '—'],['Polling',e.polling?'Identified UI poll':'Not marked as polling'],['Raw user agent',e.userAgent || '(empty)']);
+    if(e.kind==='smtpRejected')pairs.push(['Envelope sender',e.sender || '(empty)'],['Sender domain',e.senderDomain || '(empty)'],['SMTP source IP',e.ip || 'Unknown'],['Stage',e.route],['SMTP result',e.status],['Duration',responseTime(e)]);
+    else if(e.kind==='delivery')pairs.push(['Envelope sender',e.sender || '(empty)'],['Sender domain',e.senderDomain || '(empty)'],['SMTP source IP',e.ip || 'Unknown'],['Size',bytes(e.size)],['SMTP result','250 · Accepted'],['Response time',responseTime(e)]);
+    else pairs.push(['HTTP caller IP',e.ip || 'Unknown'],['Request',e.method+' '+e.route],['Status',e.status],['Duration',responseTime(e)],['Message ID',e.messageId || '—'],['Polling',e.polling?'Identified UI poll':'Not marked as polling'],['Raw user agent',e.userAgent || '(empty)']);
     for(const [label,value] of pairs) {const item=node('div');item.append(node('dt',label),node('dd',String(value)));list.append(item);}
     content.append(list);return content;
   }
@@ -236,8 +237,8 @@
       const detail=node('td',e.kind==='smtpRejected'?e.route+' · '+(e.sender || '(empty sender)'):e.kind==='delivery'?(e.sender || '(empty sender)'):e.method+' '+e.route,'event-detail');detail.title=detail.textContent;
       const source=node('td',undefined,'event-source'),ip=node('span',e.ip || 'Unknown');source.append(node('span',e.kind!=='http'?'SMTP':'HTTP','source-label'),ip);source.title=(e.kind!=='http'?'SMTP source IP: ':'HTTP caller IP: ')+(e.ip || 'Unknown');
       const result=node('td',undefined,'event-result');
-      if(e.kind==='delivery') {result.append(node('span','250','event-status'),node('span',' · '+bytes(e.size),'result-duration'));result.title='SMTP 250 · Accepted recipient delivery · '+bytes(e.size);}
-      else {result.append(node('span',e.status,'event-status'+(e.status>=400?' error':'')),node('span',' · '+Number(e.durationMs).toFixed(1)+' ms','result-duration'));}
+      if(e.kind==='delivery') {result.append(node('span','250','event-status'),node('span',' · '+responseTime(e),'result-duration'));result.title='SMTP 250 · Accepted recipient delivery · '+bytes(e.size);}
+      else {result.append(node('span',e.status,'event-status'+(e.status>=400?' error':'')),node('span',' · '+responseTime(e),'result-duration'));}
       const action=node('td',undefined,'event-action'),toggle=node('button','›','icon-btn event-expand');toggle.type='button';toggle.setAttribute('aria-label','Details for '+e.kind+' event at '+date(e.timestamp));
       const expanded=node('tr',undefined,'event-expanded'),cell=node('td');cell.colSpan=7;cell.append(eventMetadata(e));expanded.append(cell);
       // Index-based DOM IDs avoid embedding untrusted event IDs into selector syntax.
@@ -254,7 +255,7 @@
     const first=d.events.length?offset+1:0,last=d.events.length?offset+d.events.length:0;
     $('page-label').textContent=`Events ${num(first)}–${num(last)} of ${num(d.total)}${offset>=d.offsetLimit?' · limit reached':''}`;
     const windowLabel={'1h':'Last hour','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'}[params.get('window')] || 'Last 24 hours';
-    $('activity-summary').textContent=num(d.total)+' matching events · '+windowLabel+' · '+(params.get('sort')==='slowest'?'HTTP slowest first':params.get('sort')==='fastest'?'HTTP fastest first':'Latest first');
+    $('activity-summary').textContent=num(d.total)+' matching events · '+windowLabel+' · '+(params.get('sort')==='slowest'?'Slowest first':params.get('sort')==='fastest'?'Fastest first':'Latest first');
   }
   function freshness() {
     if($('freshness').dataset.stale==='true')return;

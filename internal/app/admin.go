@@ -244,7 +244,7 @@ func adminRank(ctx context.Context, db *sql.DB, table, column string, lo, hi int
 	return result, rows.Err()
 }
 
-const adminDeliverySelect = `SELECT id,'delivery' kind,timestamp,recipient,sender,sender_domain,ip,size,'' user_agent,'' route,'' method,250 status,0 duration_ms,'' message_id,0 polling FROM deliveries`
+const adminDeliverySelect = `SELECT id,'delivery' kind,timestamp,recipient,sender,sender_domain,ip,size,'' user_agent,'' route,'' method,250 status,duration_ms,'' message_id,0 polling FROM deliveries`
 const adminRejectionSelect = `SELECT id,'smtpRejected' kind,timestamp,recipient,sender,sender_domain,ip,0 size,'' user_agent,stage route,'SMTP' method,status,duration_ms,'' message_id,0 polling FROM smtp_rejections`
 const adminHTTPSelect = `SELECT id,'http' kind,timestamp,recipient,'' sender,'' sender_domain,ip,0 size,user_agent,route,method,status,duration_ms,message_id,polling FROM http_requests`
 
@@ -265,9 +265,9 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 	switch sortBy {
 	case "", "latest":
 	case "slowest":
-		order = `duration_ms DESC,timestamp DESC,id DESC,kind DESC`
+		order = `duration_ms IS NULL ASC,duration_ms DESC,timestamp DESC,id DESC,kind DESC`
 	case "fastest":
-		order = `duration_ms ASC,timestamp DESC,id DESC,kind DESC`
+		order = `duration_ms IS NULL ASC,duration_ms ASC,timestamp DESC,id DESC,kind DESC`
 	default:
 		adminError(w, 400, "Invalid sort order")
 		return
@@ -311,9 +311,6 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 	if status != 0 {
 		where += ` AND status=?`
 		args = append(args, status)
-	}
-	if sortBy == "slowest" || sortBy == "fastest" {
-		where += ` AND kind='http'`
 	}
 	if kind == "httpPoll" {
 		where += ` AND polling=1`
@@ -388,9 +385,11 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var e AnalyticsEvent
 		var ms int64
-		if err = rows.Scan(&e.ID, &e.Kind, &ms, &e.Recipient, &e.Sender, &e.SenderDomain, &e.IP, &e.Size, &e.UserAgent, &e.Route, &e.Method, &e.Status, &e.DurationMS, &e.MessageID, &e.Polling); err != nil {
+		var timing sql.NullFloat64
+		if err = rows.Scan(&e.ID, &e.Kind, &ms, &e.Recipient, &e.Sender, &e.SenderDomain, &e.IP, &e.Size, &e.UserAgent, &e.Route, &e.Method, &e.Status, &timing, &e.MessageID, &e.Polling); err != nil {
 			break
 		}
+		e.DurationMS, e.DurationKnown = timing.Float64, timing.Valid
 		e.Timestamp = time.UnixMilli(ms)
 		events = append(events, e)
 	}

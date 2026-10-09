@@ -280,11 +280,12 @@ func (s *smtpSession) Data(r io.Reader) error {
 		s.rejectData(451, deliveryStarted)
 		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "temporary storage failure"}
 	}
+	deliveryMS := float64(time.Since(deliveryStarted).Microseconds()) / 1000
 	for _, message := range messages {
 		if s.server.analytics != nil {
 			sender := boundedEventString(s.sender, 320)
 			_, domain, _ := strings.Cut(sender, "@")
-			s.server.analytics.Record(AnalyticsEvent{ID: uuid.NewString(), Kind: "delivery", Timestamp: message.Received, Recipient: boundedEventString(message.Recipient, 320), Sender: sender, SenderDomain: boundedEventString(strings.ToLower(domain), 253), IP: boundedEventString(s.sourceIP, 64), Size: message.Size, MessageID: message.ID})
+			s.server.analytics.Record(AnalyticsEvent{ID: uuid.NewString(), Kind: "delivery", Timestamp: message.Received, Recipient: boundedEventString(message.Recipient, 320), Sender: sender, SenderDomain: boundedEventString(strings.ToLower(domain), 253), IP: boundedEventString(s.sourceIP, 64), Size: message.Size, MessageID: message.ID, DurationMS: deliveryMS, DurationKnown: true})
 		}
 		log.Printf("[smtp receive] id=%s recipient=%s sender=%s source_ip=%s bytes=%d", message.ID, message.Recipient, s.sender, s.sourceIP, message.Size)
 		if s.server.cfg.MetricsEnabled {

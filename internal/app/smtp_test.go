@@ -439,6 +439,10 @@ func TestSMTPAnalyticsCountsRecipientsAndSurvivesMailExpiry(t *testing.T) {
 	if count != 3 {
 		t.Fatalf("delivery events = %d, want 3", count)
 	}
+	var missingTiming int
+	if err := analytics.DB().QueryRow("SELECT COUNT(*) FROM deliveries WHERE duration_ms IS NULL OR duration_ms < 0").Scan(&missingTiming); err != nil || missingTiming != 0 {
+		t.Fatalf("missing SMTP timings: %d, %v", missingTiming, err)
+	}
 	var sender, domain, ip, id string
 	if err := analytics.DB().QueryRow("SELECT sender,sender_domain,ip,id FROM deliveries LIMIT 1").Scan(&sender, &domain, &ip, &id); err != nil {
 		t.Fatal(err)
