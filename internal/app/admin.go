@@ -58,6 +58,7 @@ type adminOverview struct {
 func NewAdminServer(cfg Config, store *Store, smtp *SMTPServer, analytics *Analytics) http.Handler {
 	s := &adminServer{cfg, store, smtp, analytics}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /openapi.json", serveAPISpec)
 	mux.HandleFunc("GET /ui.js", adminAsset("text/javascript; charset=utf-8", uiScript))
 	mux.HandleFunc("GET /admin.js", adminAsset("text/javascript; charset=utf-8", adminScript))
 	mux.HandleFunc("GET /admin.css", adminAsset("text/css; charset=utf-8", adminCSS))

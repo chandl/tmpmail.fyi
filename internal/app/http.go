@@ -61,15 +61,7 @@ func NewHTTPServer(cfg Config, store *Store, analytics ...*Analytics) http.Handl
 		_, _ = w.Write([]byte(renderHTMLMessage(content)))
 	})
 	api.HandlerFromMux(&apiServer{store: store}, mux)
-	mux.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, _ *http.Request) {
-		specification, err := api.GetSpecJSON()
-		if err != nil {
-			http.Error(w, "API specification unavailable", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/vnd.oai.openapi+json;version=3.1")
-		_, _ = w.Write(specification)
-	})
+	mux.HandleFunc("GET /openapi.json", serveAPISpec)
 	mux.HandleFunc("GET /privacy", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = privacyTemplate.Execute(w, newPageChrome())
@@ -510,4 +502,14 @@ func publicEventRoute(path string) (route, recipient, messageID string) {
 	default:
 		return "/unknown", "", ""
 	}
+}
+
+func serveAPISpec(w http.ResponseWriter, _ *http.Request) {
+	specification, err := api.GetSpecJSON()
+	if err != nil {
+		http.Error(w, "API specification unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.oai.openapi+json;version=3.1")
+	_, _ = w.Write(specification)
 }
