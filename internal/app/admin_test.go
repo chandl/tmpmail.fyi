@@ -121,6 +121,12 @@ func TestAdminActivityFiltersPaginationAndLiteralSearch(t *testing.T) {
 			t.Fatalf("incorrect filter %s: %+v", path, out)
 		}
 	}
+	for _, check := range []struct{ kind, id string }{{"httpPoll", "h1"}, {"httpOther", "h2"}} {
+		adminGet(t, h, "/api/activity?kind="+check.kind, &out)
+		if len(out.Events) != 1 || out.Events[0].ID != check.id {
+			t.Fatalf("HTTP polling filter %s: %+v", check.kind, out)
+		}
+	}
 	adminGet(t, h, "/api/activity?senderDomain=other.org", &out)
 	if len(out.Events) != 1 || out.Events[0].ID != "different" {
 		t.Fatalf("sender drilldown: %+v", out)

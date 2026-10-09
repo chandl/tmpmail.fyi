@@ -4,6 +4,7 @@
   const params = new URLSearchParams(location.search);
   const activity = location.pathname === '/activity';
   const form = $('filters');
+  const kindLabels = {delivery:'SMTP Deliveries',http:'HTTP requests · all',httpOther:'HTTP · non-poll',httpPoll:'HTTP polls'};
   const fieldKeys = ['recipient','sender','senderDomain','sourceIP','userAgent'];
   const filterKeys = ['kind','search','callerIP',...fieldKeys];
   const REFRESH_MS = 5000;
@@ -53,7 +54,7 @@
     const labels={recipient:'Inbox (exact)',sender:'SMTP sender contains',senderDomain:'Sender domain (exact)',sourceIP:'IP address (exact)',userAgent:'HTTP user agent contains',callerIP:'HTTP caller IP (exact)'};
     const filters=[];
     if(params.get('window')&&params.get('window')!=='24h')filters.push(['window',windows[params.get('window')] || params.get('window')]);
-    if(params.get('kind'))filters.push(['kind',params.get('kind')==='delivery'?'SMTP Deliveries':'HTTP requests']);
+    if(params.get('kind'))filters.push(['kind',kindLabels[params.get('kind')] || 'All events']);
     if(params.get('search'))filters.push(['search','Search: '+params.get('search')]);
     for(const key of [...fieldKeys,'callerIP'])if(params.has(key))filters.push([key,labels[key]+': '+(params.get(key) || '(empty)')]);
     for(const [key,label] of filters) {
@@ -244,7 +245,7 @@
     hasMore=d.hasMore;$('previous').disabled=offset===0;$('next').disabled=!hasMore;
     const first=offset+(d.events.length?1:0),last=offset+d.events.length;
     $('page-label').textContent=`Events ${num(first)}–${num(last)}${offset>=d.offsetLimit?' · limit reached':''}`;
-    const type=params.get('kind')==='delivery'?'SMTP Deliveries':params.get('kind')==='http'?'HTTP requests':'All events';
+    const type=kindLabels[params.get('kind')] || 'All events';
     const windowLabel={'1h':'Last hour','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'}[params.get('window')] || 'Last 24 hours';
     $('activity-summary').textContent=type+' · '+windowLabel+' · Latest first';
   }

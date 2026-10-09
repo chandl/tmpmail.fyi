@@ -247,7 +247,7 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	kind := q.Get("kind")
-	if kind != "" && kind != "delivery" && kind != "http" {
+	if kind != "" && kind != "delivery" && kind != "http" && kind != "httpPoll" && kind != "httpOther" {
 		adminError(w, 400, "Invalid activity type")
 		return
 	}
@@ -269,12 +269,17 @@ func (s *adminServer) activity(w http.ResponseWriter, r *http.Request) {
 	if kind == "delivery" {
 		union = adminDeliverySelect
 	}
-	if kind == "http" {
+	if kind == "http" || kind == "httpPoll" || kind == "httpOther" {
 		union = adminHTTPSelect
 	}
 	now := time.Now()
 	where := ` WHERE timestamp>=? AND timestamp<=?`
 	args := []any{now.Add(-window).UnixMilli(), now.UnixMilli()}
+	if kind == "httpPoll" {
+		where += ` AND polling=1`
+	} else if kind == "httpOther" {
+		where += ` AND polling=0`
+	}
 	for _, f := range []struct{ param, column string }{{"recipient", "recipient"}, {"senderDomain", "sender_domain"}, {"callerIP", "ip"}, {"sourceIP", "ip"}} {
 		v := q.Get(f.param)
 		if len(v) > 320 {
