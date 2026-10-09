@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"golang.org/x/net/html"
+	"golang.org/x/net/html/charset"
 )
 
 type Attachment struct {
@@ -108,7 +109,7 @@ func walkMIMEParts(header textproto.MIMEHeader, body io.Reader, index *int, part
 	filename, isAttachment := attachmentFilename(header, params)
 	isAttachment = isAttachment || (!strings.HasPrefix(mediaType, "text/") && mediaType != "")
 	if !isAttachment {
-		content, err := decodeTransfer(body, header.Get("Content-Transfer-Encoding"))
+		content, err := decodeText(body, header.Get("Content-Transfer-Encoding"), params["charset"])
 		if err != nil {
 			return
 		}
@@ -173,9 +174,22 @@ func decodeTransferBytes(body io.Reader, encoding string) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
-func decodeTransfer(body io.Reader, encoding string) (string, error) {
-	data, err := decodeTransferBytes(body, encoding)
-	return string(data), err
+// decodeText applies transfer decoding before converting a declared charset.
+// Missing or unknown charsets retain UTF-8 text, replacing invalid bytes so
+// previews remain valid Unicode. Attachments bypass this conversion entirely.
+func decodeText(body io.Reader, transferEncoding, charsetLabel string) (string, error) {
+	data, err := decodeTransferBytes(body, transferEncoding)
+	if err != nil {
+		return "", err
+	}
+	if encoding, _ := charset.Lookup(strings.TrimSpace(charsetLabel)); encoding != nil {
+		decoded, err := encoding.NewDecoder().Bytes(data)
+		if err != nil {
+			return "", err
+		}
+		data = decoded
+	}
+	return strings.ToValidUTF8(string(data), "\ufffd"), nil
 }
 
 func sanitizeHTML(source string) string {
