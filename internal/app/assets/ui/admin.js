@@ -153,7 +153,7 @@
     const ceiling=step*4;
     const svg=svgNode('svg',{viewBox:`0 0 ${width} ${height}`,height,role:'group','aria-label':'Traffic chart'});
     const interval=(new Date(d.generatedAt)-new Date(d.since))/d.buckets.length;
-    const intervalLabel=interval<3600000 ? `${Number((interval/60000).toFixed(1))} min` : `${Number((interval/3600000).toFixed(1))} h`;
+    const intervalLabel=interval===86400000 ? '1 day' : interval<3600000 ? `${Number((interval/60000).toFixed(1))} min` : `${Number((interval/3600000).toFixed(1))} h`;
     svg.append(svgNode('text',{x:left,y:14,class:'chart-axis-title'},`Events / ${intervalLabel}`));
     const compact=new Intl.NumberFormat(undefined,{notation:'compact',maximumFractionDigits:1});
     for(let i=0;i<=4;i++) {

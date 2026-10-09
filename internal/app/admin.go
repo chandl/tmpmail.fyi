@@ -184,8 +184,13 @@ func (s *adminServer) overview(w http.ResponseWriter, r *http.Request) {
 	}
 	// All buckets share the same exact window, including empty intervals and the final partial interval.
 	count := 24
-	if window == time.Hour {
+	switch window {
+	case time.Hour:
 		count = 60
+	case 7 * 24 * time.Hour:
+		count = 21
+	case 30 * 24 * time.Hour:
+		count = 30
 	}
 	width := (hi - lo + int64(count) - 1) / int64(count)
 	for i := 0; i < count; i++ {

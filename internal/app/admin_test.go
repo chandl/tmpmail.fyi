@@ -76,23 +76,23 @@ func TestAdminOverviewCountsBucketsAndRanking(t *testing.T) {
 	for _, check := range []struct {
 		window     string
 		deliveries int64
-	}{{"1h", 3}, {"7d", 4}, {"30d", 4}} {
+		buckets    int
+		interval   time.Duration
+	}{{"1h", 3, 60, time.Minute}, {"7d", 4, 21, 8 * time.Hour}, {"30d", 4, 30, 24 * time.Hour}} {
 		var history adminOverview
 		adminGet(t, h, "/api/overview?window="+check.window, &history)
 		if history.Deliveries != check.deliveries {
 			t.Fatalf("window %s: deliveries %d", check.window, history.Deliveries)
 		}
-		if check.window == "1h" {
-			if len(history.Buckets) != 60 || history.Buckets[1].Timestamp.Sub(history.Buckets[0].Timestamp) != time.Minute {
-				t.Fatalf("last-hour buckets must be one minute: %+v", history.Buckets)
-			}
-			var bucketDeliveries int64
-			for _, bucket := range history.Buckets {
-				bucketDeliveries += bucket.Deliveries
-			}
-			if bucketDeliveries != history.Deliveries {
-				t.Fatalf("last-hour bucket count: %d, total: %d", bucketDeliveries, history.Deliveries)
-			}
+		if len(history.Buckets) != check.buckets || history.Buckets[1].Timestamp.Sub(history.Buckets[0].Timestamp) != check.interval {
+			t.Fatalf("window %s: incorrect bucket intervals: %+v", check.window, history.Buckets)
+		}
+		var bucketDeliveries int64
+		for _, bucket := range history.Buckets {
+			bucketDeliveries += bucket.Deliveries
+		}
+		if bucketDeliveries != history.Deliveries {
+			t.Fatalf("window %s: bucket count %d, total %d", check.window, bucketDeliveries, history.Deliveries)
 		}
 	}
 	var d, requests, p int64
