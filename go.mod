@@ -6,6 +6,7 @@ require (
 	github.com/didip/tollbooth/v7 v7.0.2
 	github.com/emersion/go-smtp v0.25.0
 	github.com/getkin/kin-openapi v0.144.0
+	github.com/google/uuid v1.6.0
 	github.com/mattn/go-sqlite3 v1.14.50
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/prometheus/client_golang v1.24.1
@@ -21,7 +22,6 @@ require (
 	github.com/go-openapi/jsonpointer v0.23.1 // indirect
 	github.com/go-openapi/swag/jsonname v0.26.0 // indirect
 	github.com/go-pkgz/expirable-cache/v3 v3.0.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/oapi-codegen/oapi-codegen/v2 v2.8.0 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect

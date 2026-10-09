@@ -94,6 +94,10 @@ func TestUnlinkFailureIsChargedAndRetried(t *testing.T) {
 	if _, err := s.Get(old.ID); err != sql.ErrNoRows {
 		t.Fatalf("old delivery retained: %v", err)
 	}
+	status := s.Status()
+	if status.CleanupErrors == 0 || status.LastCleanup == nil || status.StoredMessages != 1 {
+		t.Fatalf("dashboard must expose failed eviction cleanup without metrics: %+v", status)
+	}
 	if s.storedBytes != 2*int64(len(raw)) {
 		t.Fatalf("pending bytes lost: %d", s.storedBytes)
 	}

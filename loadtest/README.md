@@ -85,3 +85,24 @@ three flow results: `read-inbox`, `write-message`, and `smtp-to-read`. Flow
 events overlap their component requests, so do not use Locust's aggregate row
 as endpoint throughput. Stop on SMTP `421`, HTTP `503`, storage errors, or
 sustained tail-latency growth.
+
+## Admin analytics validation
+
+For local analytics comparisons, keep SMTP/public HTTP on loopback, use a fresh
+`DATA_DIR` for each run, and repeat the same corpus/workload with
+`ANALYTICS_ENABLED=false` and `true`. Set `ADMIN_ENABLED=true` only on a private
+listener. Inspect `/api/status` on that listener for ingestion lag, drops and
+write errors while running the existing seeder and Locust workload. Compare
+public request/SMTP latency independently from admin query latency. Admin traffic
+must not contribute to product request totals.
+
+A repeatable query microbenchmark is included:
+
+```sh
+go test ./internal/app -run '^$' -bench BenchmarkAdminQueries -benchtime=10x
+```
+
+It queries 10,000 delivery and 10,000 HTTP events, including a 30-day overview,
+latest activity, and searched pagination. It does not establish production
+capacity or worst-case latency at the full storage budget. Run sustained Locust
+and disk-pressure tests on the deployment host before sizing it.

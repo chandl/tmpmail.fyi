@@ -37,9 +37,11 @@ type Store struct {
 	storedBytes    int64
 	storedMessages int64
 	// removeFile is replaceable by tests to exercise unlink failures.
-	removeFile    func(string) error
-	storageFault  error
-	pendingCursor string
+	removeFile        func(string) error
+	storageFault      error
+	pendingCursor     string
+	cleanupErrorCount uint64
+	lastCleanup       time.Time
 }
 
 type cleanupStats struct {
@@ -236,6 +238,7 @@ func (s *Store) Save(recipients []string, sender string, raw []byte) (messages [
 	}
 	// Retry durable unlink work before admitting more disk usage.
 	if err := s.drainPendingLocked(); err != nil {
+		s.cleanupErrorCount++
 		log.Printf("retry pending message deletion: %v", err)
 	}
 	if s.storedBytes > s.cfg.MaxStorageBytes {
@@ -325,7 +328,11 @@ func (s *Store) Save(recipients []string, sender string, raw []byte) (messages [
 	// acceptance into an SMTP retry; pending bytes stay charged to the cap.
 	s.storedBytes += size
 	s.storedMessages += int64(len(recipients) - stats.Evicted - stats.Expired)
+	if stats.Evicted > 0 || stats.Expired > 0 {
+		s.lastCleanup = time.Now().UTC()
+	}
 	if err := s.drainPendingLocked(); err != nil {
+		s.cleanupErrorCount++
 		log.Printf("remove evicted message files: %v", err)
 	}
 	logCleanup(stats, s.cfg.MetricsEnabled)
@@ -433,6 +440,10 @@ func (s *Store) Cleanup() (err error) {
 		s.writeMu.Lock()
 		batch, batchErr := s.cleanupBatchLocked(before)
 		logCleanup(batch, s.cfg.MetricsEnabled)
+		s.lastCleanup = time.Now().UTC()
+		if batchErr != nil {
+			s.cleanupErrorCount++
+		}
 		if s.cfg.MetricsEnabled {
 			s.updateStorageMetrics()
 			s.observeDBStats()
@@ -882,4 +893,22 @@ func mailDetails(raw []byte, fallback string) (string, string) {
 		from = fallback
 	}
 	return subject, from
+}
+
+type StoreStatus struct {
+	StoredBytes    int64      `json:"storedBytes"`
+	StoredMessages int64      `json:"storedMessages"`
+	CleanupErrors  uint64     `json:"cleanupErrors"`
+	LastCleanup    *time.Time `json:"lastCleanup,omitempty"`
+}
+
+func (s *Store) Status() StoreStatus {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	status := StoreStatus{StoredBytes: s.storedBytes, StoredMessages: s.storedMessages, CleanupErrors: s.cleanupErrorCount}
+	if !s.lastCleanup.IsZero() {
+		last := s.lastCleanup
+		status.LastCleanup = &last
+	}
+	return status
 }

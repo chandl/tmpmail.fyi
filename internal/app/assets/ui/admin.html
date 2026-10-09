@@ -1,0 +1,36 @@
+{{define "admin"}}<!doctype html>
+<html lang="en"><head><title>tmpmail · Admin</title>{{template "head" .}}<link rel="stylesheet" href="/admin.css?v={{.AssetVersion}}"><script defer src="/admin.js?v={{.AssetVersion}}"></script></head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><div class="wrap"><a class="wordmark" href="/">tmpmail <span class="admin-wordmark">admin</span></a><nav class="header-nav" aria-label="Admin"><a href="/" data-page="overview">Overview</a><a href="/activity" data-page="activity">Activity</a>{{template "theme-toggle" .}}</nav></div></header>
+<main id="main" class="wrap admin-main">
+<div class="admin-title"><h1 id="page-title">Overview</h1><div class="admin-controls"><button id="live-toggle" class="btn btn-secondary btn-sm live-toggle" type="button" aria-pressed="true"><span class="live-dot" aria-hidden="true"></span><span id="live-label">Live · 5s</span></button><button id="refresh" class="icon-btn refresh-btn" type="button" aria-label="Refresh now" title="Refresh now"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.5-1L20 9M4 15l2.4 3A7 7 0 0 0 18 17"/></svg></button><span id="freshness" class="freshness">Connecting…</span></div></div>
+<form id="filters" class="admin-filters">
+<label><span class="filter-label">Time range</span><select name="window" aria-label="Time range"><option value="1h">Last hour</option><option value="24h" selected>Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
+<label class="activity-filter" hidden><span class="filter-label">Event type</span><select name="kind" aria-label="Event type"><option value="">All events</option><option value="delivery">SMTP delivery</option><option value="smtpRejected">SMTP rejection</option><option value="http">HTTP · all types</option><option value="httpOther">HTTP request</option><option value="httpPoll">HTTP poll</option></select></label>
+<label class="activity-filter" hidden><span class="filter-label">Response code<span class="match-label">Exact</span></span><input name="status" aria-label="Response code · exact" type="number" min="100" max="599" step="1" placeholder="Any code" title="HTTP status or SMTP result code, including recorded SMTP rejections."></label>
+<label class="activity-filter" hidden><span class="filter-label">Sort by</span><select name="sort" aria-label="Sort by"><option value="latest">Latest first</option><option value="slowest">Response time · slowest first</option><option value="fastest">Response time · fastest first</option></select></label>
+<div class="activity-filter field-filters" hidden>
+<label class="field-filter"><span class="filter-label">Inbox<span class="match-label">Exact</span></span><input name="recipient" aria-label="Inbox · exact" type="search" maxlength="320" placeholder="name@mail.test"></label>
+<label class="field-filter"><span class="filter-label">SMTP sender<span class="match-label">Contains</span></span><input name="sender" aria-label="SMTP sender · contains" type="search" maxlength="320" placeholder="Sender address"></label>
+<label class="field-filter"><span class="filter-label">Sender domain<span class="match-label">Exact</span></span><input name="senderDomain" aria-label="Sender domain · exact" type="search" maxlength="320" placeholder="example.com"></label>
+<label class="field-filter"><span class="filter-label">IP address<span class="match-label">Exact</span></span><input name="sourceIP" aria-label="IP address · exact" type="search" maxlength="320" placeholder="e.g. 192.0.2.1"></label>
+<label class="field-filter"><span class="filter-label">HTTP user agent<span class="match-label">Contains</span></span><input name="userAgent" aria-label="HTTP user agent · contains" type="search" maxlength="320" placeholder="Browser or client"></label>
+</div>
+<div class="activity-filter filter-footer" hidden><div class="filter-state"><div id="exact-filter" hidden></div><span id="filter-pending" class="filter-pending" hidden>Unapplied changes</span></div><div class="filter-actions"><button id="apply-filters" class="btn btn-primary btn-sm" type="submit">Apply filters</button><button id="clear-filters" class="btn btn-secondary btn-sm" type="button">Clear all</button></div></div>
+</form>
+<div id="notice" class="admin-notice" hidden role="status"></div>
+<section id="overview">
+<div id="counts" class="admin-counts" aria-busy="true"><div class="admin-count"><span>SMTP Deliveries</span><strong>—</strong></div><div class="admin-count"><span>Recipients</span><strong>—</strong></div><div class="admin-count"><span>HTTP requests</span><strong>—</strong></div><div class="admin-count"><span>Caller IPs</span><strong>—</strong></div></div>
+<section class="admin-panel traffic-panel"><div class="panel-heading"><h2>Traffic</h2><div class="chart-legend"><span><i class="delivery-swatch"></i>SMTP Deliveries</span><span><i class="http-swatch"></i>HTTP requests</span></div></div><div id="chart" class="admin-chart"></div><div id="chart-tooltip" class="chart-tooltip" hidden></div><div class="history-strip"><span id="history">Loading history…</span><span id="ingestion"></span></div></section>
+<div class="admin-rankings"><section class="admin-panel"><div class="panel-heading"><h2>Hot inboxes</h2><span class="panel-unit">SMTP Deliveries</span></div><div id="inboxes"></div></section><section class="admin-panel"><div class="panel-heading"><h2>Sender domains</h2><span class="panel-unit">SMTP Deliveries</span></div><div id="senders"></div></section><section class="admin-panel"><div class="panel-heading"><h2>HTTP callers</h2><span class="panel-unit">Requests</span></div><div id="callers"></div></section></div>
+<section class="service-panel" aria-label="Service status"><div id="system-metrics" class="system-metrics"><span class="muted">Loading service status…</span></div></section>
+</section>
+<section id="activity" hidden>
+<div class="admin-panel activity-panel"><div class="panel-heading"><h2>Activity log</h2><span id="activity-summary" class="panel-unit">Latest first</span></div>
+<div class="activity-table-wrap"><table class="activity-table"><colgroup><col class="col-time"><col class="col-kind"><col class="col-recipient"><col class="col-detail"><col class="col-ip"><col class="col-result"><col class="col-expand"></colgroup><thead><tr><th id="activity-time-heading" scope="col">Time</th><th scope="col">Type</th><th scope="col">Recipient / message</th><th scope="col">Sender / request</th><th scope="col">Source / caller IP</th><th scope="col">Response / time</th><th scope="col"><span class="visually-hidden">Details</span></th></tr></thead><tbody id="events"></tbody></table></div></div>
+<div class="admin-pagination"><button id="previous" class="btn btn-secondary btn-sm">Previous</button><span id="page-label"></span><button id="next" class="btn btn-secondary btn-sm">Next</button></div><div id="activity-history" class="history-strip"></div>
+</section>
+<noscript><p>JavaScript is required to query admin metadata.</p></noscript>
+</main>{{template "footer" .}}
+</body></html>{{end}}

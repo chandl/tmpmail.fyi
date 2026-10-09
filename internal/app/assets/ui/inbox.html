@@ -20,7 +20,7 @@
 
 {{define "start"}}<section class="start" aria-labelledby="start-title">
 <h1 id="start-title">Get a temporary email address</h1>
-<p class="lede">Use it anywhere you need an email address. No sign-up; messages are deleted after 1 hour.</p>
+<p class="lede">Use it anywhere you need an email address. No sign-up; messages are deleted after {{.MessageLifetime}}.</p>
 {{template "address-form" .}}
 <div class="address-actions">
 {{if .Address}}<button class="btn btn-primary" type="button" data-copy="{{.Address}}">{{template "copy-label" "Copy address"}}</button>{{end}}

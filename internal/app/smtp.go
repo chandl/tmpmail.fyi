@@ -16,6 +16,7 @@ import (
 	"time"
 
 	smtp "github.com/emersion/go-smtp"
+	"github.com/google/uuid"
 )
 
 const (
@@ -27,17 +28,18 @@ const (
 )
 
 type SMTPServer struct {
-	cfg      Config
-	store    *Store
-	server   *smtp.Server
-	sessions chan struct{}
-	rejects  chan struct{}
-	sourceMu sync.Mutex
-	sources  map[string]int
-	tlsCert  *tlsCertificateReloader
+	analytics *Analytics
+	cfg       Config
+	store     *Store
+	server    *smtp.Server
+	sessions  chan struct{}
+	rejects   chan struct{}
+	sourceMu  sync.Mutex
+	sources   map[string]int
+	tlsCert   *tlsCertificateReloader
 }
 
-func NewSMTPServer(cfg Config, store *Store) (*SMTPServer, error) {
+func NewSMTPServer(cfg Config, store *Store, analytics ...*Analytics) (*SMTPServer, error) {
 	limit := cfg.MaxSMTPConnections
 	if limit == 0 {
 		limit = defaultMaxSMTPConnections
@@ -47,6 +49,9 @@ func NewSMTPServer(cfg Config, store *Store) (*SMTPServer, error) {
 		maxRecipients = defaultMaxSMTPRecipients
 	}
 	server := &SMTPServer{cfg: cfg, store: store, sessions: make(chan struct{}, limit), rejects: make(chan struct{}, maxConcurrentSMTPRejections), sources: make(map[string]int)}
+	if len(analytics) > 0 && analytics[0] != nil && analytics[0].Snapshot().Enabled {
+		server.analytics = analytics[0]
+	}
 	if cfg.SMTPTLSCertFile != "" {
 		reloader, err := newTLSCertificateReloader(cfg.SMTPTLSCertFile, cfg.SMTPTLSKeyFile, cfg.MailDomain, setSMTPTLSCertificateExpiry)
 		if err != nil {
@@ -155,8 +160,11 @@ func (s *SMTPServer) scheduleRejection(conn net.Conn, reason string) {
 	case s.rejects <- struct{}{}:
 		go func() {
 			defer func() { <-s.rejects }()
+			started := time.Now()
 			_ = conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
-			_, _ = io.WriteString(conn, "421 4.3.2 service temporarily overloaded\r\n")
+			if _, err := io.WriteString(conn, "421 4.3.2 service temporarily overloaded\r\n"); err == nil {
+				s.recordRejection(sourceAddress(conn.RemoteAddr()), "", "", "CONNECT", 421, started)
+			}
 			_ = conn.Close()
 		}()
 	default:
@@ -199,6 +207,20 @@ type smtpSession struct {
 	recipients []string
 }
 
+func (s *SMTPServer) recordRejection(ip, sender, recipient, stage string, code int, started time.Time) {
+	if s.analytics == nil {
+		return
+	}
+	_, domain, _ := strings.Cut(sender, "@")
+	s.analytics.Record(AnalyticsEvent{ID: uuid.NewString(), Kind: "smtpRejected", Timestamp: time.Now(), IP: ip, Sender: sender, SenderDomain: strings.ToLower(domain), Recipient: recipient, Route: stage, Status: code, DurationMS: float64(time.Since(started).Microseconds()) / 1000})
+}
+
+func (s *smtpSession) rejectData(code int, started time.Time) {
+	for _, recipient := range s.recipients {
+		s.server.recordRejection(s.sourceIP, s.sender, recipient, "DATA", code, started)
+	}
+}
+
 func (s *smtpSession) Reset() { s.sender, s.recipients = "", nil }
 
 func (s *smtpSession) Logout() error { return nil }
@@ -209,10 +231,12 @@ func (s *smtpSession) Mail(from string, _ *smtp.MailOptions) error {
 }
 
 func (s *smtpSession) Rcpt(to string, _ *smtp.RcptOptions) error {
+	started := time.Now()
 	if !s.server.accepts(to) {
 		if s.server.cfg.MetricsEnabled {
 			smtpRejections.WithLabelValues("recipient_domain").Inc()
 		}
+		s.server.recordRejection(s.sourceIP, s.sender, to, "RCPT TO", 550, started)
 		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "unknown recipient domain"}
 	}
 	to = normalizeRecipient(to)
@@ -241,8 +265,10 @@ func (s *smtpSession) Data(r io.Reader) error {
 		}
 		observeDelivery(err)
 		if errors.Is(err, smtp.ErrDataTooLarge) {
+			s.rejectData(552, deliveryStarted)
 			return smtp.ErrDataTooLarge
 		}
+		s.rejectData(554, deliveryStarted)
 		return &smtp.SMTPError{Code: 554, EnhancedCode: smtp.EnhancedCode{5, 0, 0}, Message: "message read failed"}
 	}
 	messages, err := s.server.store.Save(s.recipients, s.sender, raw)
@@ -252,9 +278,16 @@ func (s *smtpSession) Data(r io.Reader) error {
 			smtpMessages.WithLabelValues("failed").Inc()
 		}
 		observeDelivery(err)
+		s.rejectData(451, deliveryStarted)
 		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "temporary storage failure"}
 	}
+	deliveryMS := float64(time.Since(deliveryStarted).Microseconds()) / 1000
 	for _, message := range messages {
+		if s.server.analytics != nil {
+			sender := boundedEventString(s.sender, 320)
+			_, domain, _ := strings.Cut(sender, "@")
+			s.server.analytics.Record(AnalyticsEvent{ID: uuid.NewString(), Kind: "delivery", Timestamp: message.Received, Recipient: boundedEventString(message.Recipient, 320), Sender: sender, SenderDomain: boundedEventString(strings.ToLower(domain), 253), IP: boundedEventString(s.sourceIP, 64), Size: message.Size, MessageID: message.ID, DurationMS: deliveryMS, DurationKnown: true})
+		}
 		log.Printf("[smtp receive] id=%s recipient=%s sender=%s source_ip=%s bytes=%d", message.ID, message.Recipient, s.sender, s.sourceIP, message.Size)
 		if s.server.cfg.MetricsEnabled {
 			smtpMessages.WithLabelValues("accepted").Inc()
@@ -400,4 +433,27 @@ func (s *SMTPServer) tlsConfig() *tls.Config {
 		return nil
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: s.tlsCert.GetCertificate}
+}
+
+// SMTPRuntimeStatus reads live admission and certificate state independently of Prometheus.
+type SMTPRuntimeStatus struct {
+	ActiveConnections int        `json:"activeConnections"`
+	ConnectionLimit   int        `json:"connectionLimit"`
+	TLSEnabled        bool       `json:"tlsEnabled"`
+	TLSNotAfter       *time.Time `json:"tlsNotAfter,omitempty"`
+}
+
+func (s *SMTPServer) RuntimeStatus() SMTPRuntimeStatus {
+	status := SMTPRuntimeStatus{ActiveConnections: len(s.sessions), ConnectionLimit: cap(s.sessions), TLSEnabled: s.tlsCert != nil}
+	if s.tlsCert != nil {
+		// Use the same reload path as STARTTLS, retaining the last valid certificate.
+		cert, _ := s.tlsCert.GetCertificate(nil)
+		if cert != nil && len(cert.Certificate) > 0 {
+			if leaf, err := x509.ParseCertificate(cert.Certificate[0]); err == nil {
+				expiry := leaf.NotAfter.UTC()
+				status.TLSNotAfter = &expiry
+			}
+		}
+	}
+	return status
 }

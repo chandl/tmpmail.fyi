@@ -119,6 +119,8 @@ func statusClass(status string) string {
 
 func metricRoute(path, pattern string) string {
 	switch {
+	case path == "/" || path == "/privacy" || path == "/healthz" || path == "/openapi.json" || path == "/ui.css" || path == "/ui.js" || path == "/metrics":
+		return path
 	case pattern == "GET /{inbox}":
 		return "/{inbox}"
 	case pattern == "" && strings.Count(strings.Trim(path, "/"), "/") == 0 && path != "/":

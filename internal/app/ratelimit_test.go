@@ -122,6 +122,27 @@ func TestFirstHeaderValue(t *testing.T) {
 	}
 }
 
+func TestResolvedClientIPUsesOnlyConfiguredValidHeader(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.RemoteAddr = "192.0.2.1:1234"
+	request.Header.Set("X-Forwarded-For", "203.0.113.99")
+	request.Header.Set("CF-Connecting-IP", "203.0.113.10, 10.0.0.1")
+	if got := resolvedClientIP(request, ""); got != "192.0.2.1" {
+		t.Fatalf("unconfigured header trusted: %q", got)
+	}
+	if got := resolvedClientIP(request, "CF-Connecting-IP"); got != "203.0.113.10" {
+		t.Fatalf("configured header: %q", got)
+	}
+	request.Header.Set("CF-Connecting-IP", "arbitrary-non-IP")
+	if got := resolvedClientIP(request, "CF-Connecting-IP"); got != "192.0.2.1" {
+		t.Fatalf("invalid header did not fall back: %q", got)
+	}
+	request.RemoteAddr = "[2001:db8::1]:1234"
+	if got := resolvedClientIP(request, ""); got != "2001:db8::1" {
+		t.Fatalf("IPv6 peer: %q", got)
+	}
+}
+
 func TestHealthcheckBypassesExhaustedClientBucket(t *testing.T) {
 	for _, ipHeader := range []string{"", "CF-Connecting-IP"} {
 		t.Run("header="+ipHeader, func(t *testing.T) {

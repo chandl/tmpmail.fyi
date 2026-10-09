@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/chandl/tmpmail.fyi/internal/api"
+	"github.com/google/uuid"
 )
 
 //go:embed assets/favicon/*
 var faviconAssets embed.FS
 
-func NewHTTPServer(cfg Config, store *Store) http.Handler {
+func NewHTTPServer(cfg Config, store *Store, analytics ...*Analytics) http.Handler {
 	mux := http.NewServeMux()
 	for _, name := range []string{"favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png", "android-chrome-192x192.png", "android-chrome-512x512.png", "site.webmanifest"} {
 		mux.HandleFunc("GET /"+name, serveFaviconAsset(name))
@@ -68,18 +69,10 @@ func NewHTTPServer(cfg Config, store *Store) http.Handler {
 		_, _ = w.Write([]byte(renderHTMLMessage(content)))
 	})
 	api.HandlerFromMux(&apiServer{store: store}, mux)
-	mux.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, _ *http.Request) {
-		specification, err := api.GetSpecJSON()
-		if err != nil {
-			http.Error(w, "API specification unavailable", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/vnd.oai.openapi+json;version=3.1")
-		_, _ = w.Write(specification)
-	})
+	mux.HandleFunc("GET /openapi.json", serveAPISpec)
 	mux.HandleFunc("GET /privacy", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = privacyTemplate.Execute(w, newPageChrome())
+		_ = privacyTemplate.Execute(w, publicPageChrome(store.cfg.MessageTTL))
 	})
 	// A single path segment is an inbox shortcut (for example, /build-482).
 	// More-specific registered routes above take precedence over this pattern.
@@ -92,12 +85,16 @@ func NewHTTPServer(cfg Config, store *Store) http.Handler {
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		renderInbox(r.Context(), w, store, cfg.MailDomain, strings.TrimSpace(r.URL.Query().Get("inbox")), pageOffset(r.URL.Query().Get("offset")), r.URL.Query().Get("message"))
 	})
-	return requestLogger(
+	public := requestLogger(
 		rateLimitPerIP(limitHTTPRequests(securityHeaders(mux), cfg.MaxHTTPRequests, cfg.MetricsEnabled), cfg.HTTPRateLimitRPS, cfg.HTTPRateLimitBurst, cfg.HTTPRateLimitIPHeader),
 		cfg.MetricsEnabled,
 		cfg.HTTPAccessLogMode,
 		cfg.HTTPLogHeaders,
 	)
+	if len(analytics) > 0 && analytics[0] != nil && analytics[0].Snapshot().Enabled {
+		return analyticsHTTP(public, analytics[0], cfg.HTTPRateLimitIPHeader, cfg.MailDomain)
+	}
+	return public
 }
 
 func serveFaviconAsset(name string) http.HandlerFunc {
@@ -345,7 +342,7 @@ func renderInbox(ctx context.Context, w http.ResponseWriter, store *Store, domai
 		OlderOffset int
 		CountLabel  string
 		SelectedID  string
-	}{pageChrome: newPageChrome(), InboxName: inboxName, Domain: domain}
+	}{pageChrome: publicPageChrome(store.cfg.MessageTTL), InboxName: inboxName, Domain: domain}
 	if inboxName != "" {
 		if strings.ContainsAny(inboxName, "@/\\") {
 			data.Error = "Enter only the inbox name, without the domain."
@@ -479,6 +476,81 @@ func splitRawMessage(raw string) (headers, body string) {
 		return parts[0], parts[1]
 	}
 	return raw, ""
+}
+
+// All retained strings have byte bounds before entering the shared queue.
+func boundedEventString(value string, limit int) string {
+	if len(value) > limit {
+		value = value[:limit]
+	}
+	return strings.ToValidUTF8(value, "")
+}
+
+func analyticsHTTP(next http.Handler, analytics *Analytics, ipHeader, mailDomain string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		recorder := &responseRecorder{ResponseWriter: w}
+		next.ServeHTTP(recorder, r)
+		status := recorder.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		route, recipient, messageID := publicEventRoute(r.URL.Path)
+		if route == "/" {
+			recipient = strings.TrimSpace(r.URL.Query().Get("inbox"))
+		}
+		if route == "/" || route == "/{inbox}" {
+			if recipient != "" && !strings.ContainsAny(recipient, "@/\\") {
+				recipient += "@" + mailDomain
+			} else {
+				recipient = ""
+			}
+		}
+		analytics.Record(AnalyticsEvent{
+			ID: uuid.NewString(), Kind: "http", Timestamp: started.UTC(), IP: resolvedClientIP(r, ipHeader),
+			UserAgent: boundedEventString(r.UserAgent(), 512), Route: route, Method: boundedEventString(r.Method, 16),
+			Status: status, DurationMS: float64(time.Since(started).Microseconds()) / 1000,
+			Recipient: boundedEventString(recipient, 320), MessageID: boundedEventString(messageID, 128),
+			Polling: r.Header.Get("X-Tmpmail-Poll") == "1" && route == "/api/v1/inboxes/{inbox}",
+		})
+	})
+}
+
+// Normalize from the path even when admission rejected a request before the mux.
+// Unrecognized paths use a fixed fallback; query strings never enter events.
+func publicEventRoute(path string) (route, recipient, messageID string) {
+	switch path {
+	case "/", "/privacy", "/healthz", "/openapi.json", "/ui.css", "/ui.js", "/metrics",
+		"/favicon.ico", "/favicon-16x16.png", "/favicon-32x32.png", "/apple-touch-icon.png", "/android-chrome-192x192.png", "/android-chrome-512x512.png", "/site.webmanifest":
+		return path, "", ""
+	}
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	switch {
+	case len(parts) == 4 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "inboxes" && parts[3] != "":
+		return "/api/v1/inboxes/{inbox}", parts[3], ""
+	case len(parts) == 4 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "messages" && parts[3] != "":
+		return "/api/v1/messages/{id}", "", parts[3]
+	case len(parts) == 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "messages" && parts[4] == "attachments" && parts[3] != "":
+		return "/api/v1/messages/{id}/attachments/{index}", "", parts[3]
+	case len(parts) == 3 && parts[0] == "ui" && parts[1] == "messages" && parts[2] != "":
+		return "/ui/messages/{id}", "", parts[2]
+	case len(parts) == 4 && parts[0] == "ui" && parts[1] == "messages" && parts[3] == "html" && parts[2] != "":
+		return "/ui/messages/{id}/html", "", parts[2]
+	case len(parts) == 1 && parts[0] != "":
+		return "/{inbox}", parts[0], ""
+	default:
+		return "/unknown", "", ""
+	}
+}
+
+func serveAPISpec(w http.ResponseWriter, _ *http.Request) {
+	specification, err := api.GetSpecJSON()
+	if err != nil {
+		http.Error(w, "API specification unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.oai.openapi+json;version=3.1")
+	_, _ = w.Write(specification)
 }
 
 // Expiry is a missing database row. Storage failures must remain retryable and

@@ -176,8 +176,13 @@ func TestPrivacyPageExplainsMessageHandling(t *testing.T) {
 	NewHTTPServer(Config{MailDomain: "mail.test"}, store).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/privacy", nil))
 
 	page := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(page, "Disposable email") || !strings.Contains(page, "Privacy and message handling") || !strings.Contains(page, "automatically deleted after one hour by default") || !strings.Contains(page, "does not include advertising or analytics trackers") {
+	if response.Code != http.StatusOK || !strings.Contains(page, "Disposable email") || !strings.Contains(page, "Privacy and message handling") || !strings.Contains(page, "automatically deleted after 1 hour on this service") || !strings.Contains(page, "does not include advertising or third-party analytics trackers") {
 		t.Fatalf("expected privacy details page, got status=%d body=%q", response.Code, page)
+	}
+	for _, disclosure := range []string{"Service activity and analytics", "When analytics is enabled", "they are not anonymous", "up to 30 days", "does not immediately delete its separate activity record", "Analytics records do not include message subjects"} {
+		if !strings.Contains(page, disclosure) {
+			t.Fatalf("missing analytics privacy disclosure: %s", disclosure)
+		}
 	}
 }
 
@@ -530,6 +535,94 @@ func TestBlockedImagesAreCountedAndMarked(t *testing.T) {
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/?inbox=build", nil))
 	if !strings.Contains(page.Body.String(), "Tracking pixel blocked") {
 		t.Fatalf("expected blocked image note in the reader, got %q", page.Body.String())
+	}
+}
+
+func TestPublicAnalyticsRouteNormalization(t *testing.T) {
+	cases := []struct{ path, route, recipient, message string }{
+		{"/", "/", "", ""},
+		{"/build-482", "/{inbox}", "build-482", ""},
+		{"/api/v1/inboxes/build@mail.test", "/api/v1/inboxes/{inbox}", "build@mail.test", ""},
+		{"/api/v1/messages/abc", "/api/v1/messages/{id}", "", "abc"},
+		{"/api/v1/messages/abc/attachments/1", "/api/v1/messages/{id}/attachments/{index}", "", "abc"},
+		{"/ui/messages/abc/html", "/ui/messages/{id}/html", "", "abc"},
+		{"/arbitrary/private/path", "/unknown", "", ""},
+	}
+	for _, tc := range cases {
+		route, recipient, message := publicEventRoute(tc.path)
+		if route != tc.route || recipient != tc.recipient || message != tc.message {
+			t.Errorf("route(%q) = %q %q %q", tc.path, route, recipient, message)
+		}
+	}
+	if got := boundedEventString(strings.Repeat("é", 300), 511); len(got) > 511 || len(got)%2 != 0 {
+		t.Fatalf("invalid bounded UTF-8: %d bytes", len(got))
+	}
+}
+
+func TestHTTPAnalyticsAttributionPollingAndUnavailableStorage(t *testing.T) {
+	store := testStore(t, time.Hour)
+	analytics := OpenAnalytics(Config{AnalyticsEnabled: true, DataDir: t.TempDir()})
+	defer analytics.Close()
+	handler := NewHTTPServer(Config{MailDomain: "mail.test", HTTPRateLimitIPHeader: "CF-Connecting-IP"}, store, analytics)
+	for _, tc := range []struct{ path, marker string }{
+		{"/api/v1/inboxes/build@mail.test?secret=not-retained", "1"},
+		{"/?inbox=build&secret=not-retained", ""},
+		{"/privacy", "1"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		request.RemoteAddr = "192.0.2.1:1234"
+		request.Header.Set("CF-Connecting-IP", "203.0.113.1")
+		request.Header.Set("X-Forwarded-For", "203.0.113.99")
+		request.Header.Set("User-Agent", strings.Repeat("x", 2048))
+		request.Header.Set("X-Tmpmail-Poll", tc.marker)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("public request: %d", response.Code)
+		}
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var count int
+	for time.Now().Before(deadline) {
+		if err := analytics.DB().QueryRow("SELECT COUNT(*) FROM http_requests").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count == 3 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if count != 3 {
+		t.Fatalf("HTTP events=%d", count)
+	}
+	var bad, polling, inbox int
+	if err := analytics.DB().QueryRow("SELECT COUNT(*) FROM http_requests WHERE ip != '203.0.113.1' OR length(user_agent)>512 OR route LIKE '%secret%'").Scan(&bad); err != nil {
+		t.Fatal(err)
+	}
+	if err := analytics.DB().QueryRow("SELECT COUNT(*) FROM http_requests WHERE polling=1").Scan(&polling); err != nil {
+		t.Fatal(err)
+	}
+	if err := analytics.DB().QueryRow("SELECT COUNT(*) FROM http_requests WHERE recipient='build@mail.test'").Scan(&inbox); err != nil {
+		t.Fatal(err)
+	}
+	if bad != 0 || polling != 1 || inbox != 2 {
+		t.Fatalf("bad=%d polling=%d inbox=%d", bad, polling, inbox)
+	}
+	if err := analytics.DB().Close(); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("analytics failure affected public health: %d", response.Code)
+	}
+	server, err := NewSMTPServer(Config{MailDomain: "mail.test"}, store, analytics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &smtpSession{server: server, sender: "sender@example.org", recipients: []string{"works@mail.test"}}
+	if err := session.Data(strings.NewReader("Subject: survives analytics failure\r\n\r\nhello")); err != nil {
+		t.Fatalf("analytics failure affected SMTP: %v", err)
 	}
 }
 
