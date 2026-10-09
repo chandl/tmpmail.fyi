@@ -29,6 +29,7 @@
   $('activity-time-heading').textContent='Time · '+zone;
   $('page-title').textContent = activity ? 'Activity' : 'Overview';
   $('overview').hidden = activity; $('activity').hidden = !activity;
+  document.querySelector('.system-details').hidden = activity;
   document.querySelectorAll('.activity-filter').forEach(e => e.hidden = !activity);
   document.querySelector(`[data-page="${activity ? 'activity' : 'overview'}"]`).setAttribute('aria-current', 'page');
   function syncFilters() {
