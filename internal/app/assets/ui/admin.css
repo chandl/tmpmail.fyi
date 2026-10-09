@@ -100,7 +100,7 @@
 .activity-panel>.panel-heading { padding:14px 16px; margin:0; }
 .activity-table-wrap { overflow:auto; max-height: min(66vh,650px); scrollbar-gutter:stable; }
 .activity-table { width:100%; min-width:1040px; border-collapse:separate; border-spacing:0; table-layout:fixed; text-align:left; font-size:11.5px; }
-.col-time { width:146px; }.col-kind { width:88px; }.col-recipient { width:196px; }.col-ip { width:174px; }.col-result { width:124px; }.col-expand { width:38px; }
+.col-time { width:146px; }.col-kind { width:112px; }.col-recipient { width:196px; }.col-ip { width:174px; }.col-result { width:124px; }.col-expand { width:38px; }
 .activity-table th { position:sticky; top:0; z-index:1; background:var(--surface-2); color:var(--muted); font-size:10.5px; font-weight:500; padding:9px 12px; border-top:1px solid var(--border); border-bottom:1px solid var(--border); white-space:nowrap; }
 .activity-table td { padding:4px 12px; border-bottom:1px solid var(--border); }
 .activity-table .admin-event:hover td { background:var(--surface-2); }

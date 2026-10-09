@@ -4,7 +4,7 @@
   const params = new URLSearchParams(location.search);
   const activity = location.pathname === '/activity';
   const form = $('filters');
-  const kindLabels = {smtpRejected:'SMTP rejections',delivery:'SMTP Deliveries',http:'HTTP requests · all',httpOther:'HTTP · non-poll',httpPoll:'HTTP polls'};
+  const kindLabels = Object.fromEntries(Array.from(form.elements.kind.options, option => [option.value, option.textContent]));
   const fieldKeys = ['recipient','sender','senderDomain','sourceIP','userAgent','status'];
   const filterKeys = ['kind','sort','search','callerIP',...fieldKeys];
   const REFRESH_MS = 5000;
@@ -226,7 +226,7 @@
       const row=node('tr',undefined,'admin-event');row.dataset.eventId=e.id;
       const timeCell=node('td',undefined,'event-time'), time=node('time',shortDate(e.timestamp)+' '+eventClock(e.timestamp));
       time.dateTime=e.timestamp;time.title=date(e.timestamp);timeCell.append(time);
-      const kind=node('td',undefined,'event-kind');kind.append(node('span',e.kind==='smtpRejected'?'Rejected':e.kind==='delivery'?'Delivery':e.polling?'HTTP poll':'HTTP','admin-kind '+e.kind));
+      const kind=node('td',undefined,'event-kind');kind.append(node('span',kindLabels[e.kind==='http'?(e.polling?'httpPoll':'httpOther'):e.kind],'admin-kind '+e.kind));
       const recipient=node('td',e.recipient || e.messageId || '—','event-recipient');recipient.title=e.recipient || e.messageId || '';
       const detail=node('td',e.kind==='smtpRejected'?e.route+' · '+(e.sender || '(empty sender)'):e.kind==='delivery'?(e.sender || '(empty sender)'):e.method+' '+e.route,'event-detail');detail.title=detail.textContent;
       const source=node('td',undefined,'event-source'),ip=node('span',e.ip || 'Unknown');source.append(node('span',e.kind!=='http'?'SMTP':'HTTP','source-label'),ip);source.title=(e.kind!=='http'?'SMTP source IP: ':'HTTP caller IP: ')+(e.ip || 'Unknown');
