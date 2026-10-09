@@ -29,8 +29,7 @@
 <div class="activity-table-wrap"><table class="activity-table"><colgroup><col class="col-time"><col class="col-kind"><col class="col-recipient"><col class="col-detail"><col class="col-ip"><col class="col-result"><col class="col-expand"></colgroup><thead><tr><th id="activity-time-heading" scope="col">Time</th><th scope="col">Type</th><th scope="col">Recipient / message</th><th scope="col">Sender / request</th><th scope="col">Source / caller IP</th><th scope="col">Size / response</th><th scope="col"><span class="visually-hidden">Details</span></th></tr></thead><tbody id="events"></tbody></table></div></div>
 <div class="admin-pagination"><button id="previous" class="btn btn-secondary btn-sm">Previous</button><span id="page-label"></span><button id="next" class="btn btn-secondary btn-sm">Next</button></div><div id="activity-history" class="history-strip"></div>
 </section>
-<section class="service-strip" aria-label="Service status" id="service-status"><span class="muted">Loading service status…</span></section>
-<details class="system-details"><summary>System details<span>Runtime, storage &amp; retention</span></summary><div class="admin-health"><section class="admin-panel"><h2>Runtime</h2><dl id="runtime"></dl></section><section class="admin-panel"><h2>Analytics</h2><dl id="analytics"></dl><p class="detail-note">Counters reset when the process restarts. Storage usage counts live SQLite pages and WAL; the budget is not a filesystem quota. History can expire or be evicted early.</p></section></div></details>
+<section class="service-panel" aria-label="Service status"><div class="service-strip" id="service-status"><span class="muted">Loading service status…</span></div><div id="system-metrics" class="system-metrics" hidden></div></section>
 <noscript><p>JavaScript is required to query admin metadata.</p></noscript>
 </main>{{template "footer" .}}
 </body></html>{{end}}

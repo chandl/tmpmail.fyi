@@ -32,7 +32,8 @@
   $('activity-time-heading').textContent='Time · '+zone;
   $('page-title').textContent = activity ? 'Activity' : 'Overview';
   $('overview').hidden = activity; $('activity').hidden = !activity;
-  document.querySelector('.system-details').hidden = activity;
+  $('system-metrics').hidden = activity;
+  $('service-status').hidden = !activity;
   document.querySelectorAll('.activity-filter').forEach(e => e.hidden = !activity);
   document.querySelector(`[data-page="${activity ? 'activity' : 'overview'}"]`).setAttribute('aria-current', 'page');
   function syncFilters() {
@@ -97,26 +98,8 @@
       fill.style.width=(rank.count/Math.max(1,ranks[0].count)*100)+'%';track.append(fill);a.append(line,track);target.append(a);
     }
   }
-  function details(id, pairs) {
-    const target=$(id);target.replaceChildren();
-    for(const [label,value] of pairs) {const row=node('div');row.append(node('dt',label),node('dd',String(value)));target.append(row);}
-  }
   function health(s, earliest) {
     const smtp=s.smtp || {}, store=s.store || {}, a=s.analytics || {};
-    details('runtime',[
-      ['Uptime',duration(s.uptimeSeconds)],['Heap memory',bytes(s.memoryBytes)],['Goroutines',num(s.goroutines)],
-      ['SMTP connections',`${num(smtp.activeConnections)} / ${num(smtp.connectionLimit)}`],
-      ['Mail storage',`${bytes(store.storedBytes)} / ${bytes(s.messageStorageBudgetBytes)}`],['Stored messages',num(store.storedMessages)],
-      ['Cleanup errors',num(store.cleanupErrors)],['Last cleanup',store.lastCleanup ? date(store.lastCleanup) : 'Not yet'],
-      ['SMTP TLS',smtp.tlsEnabled ? 'Expires '+date(smtp.tlsNotAfter) : 'Disabled']
-    ]);
-    details('analytics',[
-      ['Ingestion',a.available ? 'Available' : 'Unavailable'],['Live pages + WAL',`${bytes(a.storageBytes)} / ${bytes(s.storageBudgetBytes)}`],
-      ['Retention limit',`${num(s.retentionHours / 24)} days`],['Earliest retained event',date(earliest || a.earliestEvent)],
-      ['Last batch · this process',a.lastIngested ? date(a.lastIngested) : 'None yet'],
-      ['Ingestion lag',`${Number(a.lagSeconds || 0).toFixed(1)} s`],['Dropped events',num(a.droppedEvents)],
-      ['Write errors',num(a.writeErrors)],['Early evictions',num(a.earlyEvictedEvents)]
-    ]);
     const first=earliest || a.earliestEvent;
     const historyText=`${first ? 'History from '+shortDate(first) : 'No retained history'} · ${num(s.retentionHours / 24)}-day limit`;
     const ingestionText=`${a.available ? 'Ingestion '+Number(a.lagSeconds || 0).toFixed(1)+'s behind' : 'Ingestion unavailable'} · ${num(a.droppedEvents)} dropped`;
@@ -130,6 +113,26 @@
       ['Cleanup',store.cleanupErrors ? num(store.cleanupErrors)+' errors' : 'OK',store.cleanupErrors>0],
       ['Analytics',a.available ? 'Connected' : 'Unavailable',!a.available]
     ]) {const item=node('div',undefined,'service-item'+(warn?' warning':''));if(label==='Process')item.append(node('i',undefined,'service-dot'));item.append(node('span',label),node('strong',value));strip.append(item);}
+    if(!activity) {
+      const cards=[
+        ['Process','Running',false,[['Uptime',duration(s.uptimeSeconds)],['Heap',bytes(s.memoryBytes)],['Goroutines',num(s.goroutines)]]],
+        ['SMTP',`${num(smtp.activeConnections)} / ${num(smtp.connectionLimit)}`,smtp.tlsEnabled && new Date(smtp.tlsNotAfter)<new Date(),[['Connections','Active / limit'],['TLS',smtp.tlsEnabled?'Enabled':'Off'],['Certificate',smtp.tlsEnabled?date(smtp.tlsNotAfter):'—']]],
+        ['Mail',bytes(store.storedBytes),false,[['Budget',bytes(s.messageStorageBudgetBytes)],['Messages',num(store.storedMessages)]]],
+        ['Cleanup',store.cleanupErrors?num(store.cleanupErrors)+' errors':'OK',store.cleanupErrors>0,[['Last run',store.lastCleanup?date(store.lastCleanup):'Not yet'],['Errors',num(store.cleanupErrors)]]],
+        ['Analytics',a.available?'Connected':'Unavailable',!a.available,[['Storage / budget',`${bytes(a.storageBytes)} / ${bytes(s.storageBudgetBytes)}`],['Retention',num(s.retentionHours/24)+' days'],['History from',date(first)],['Early evictions',num(a.earlyEvictedEvents)]]],
+        ['Ingestion',a.available?Number(a.lagSeconds || 0).toFixed(1)+'s behind':'Unavailable',!a.available || a.lagSeconds>30 || a.droppedEvents>0,[['Last batch',a.lastIngested?date(a.lastIngested):'None yet'],['Dropped events',num(a.droppedEvents)],['Write errors',num(a.writeErrors)]]]
+      ];
+      const target=$('system-metrics');target.replaceChildren();
+      for(const [label,value,warn,pairs] of cards) {
+        const card=node('section',undefined,'system-metric'+(warn?' warning':''));
+        const heading=node('div',undefined,'system-metric-heading');
+        heading.append(node('h2',label),node('strong',value));card.append(heading);
+        const dl=node('dl');
+        for(const [key,detail] of pairs) {const row=node('div');row.append(node('dt',key),node('dd',detail));dl.append(row);}
+        card.append(dl);target.append(card);
+      }
+      target.title='Counters reset on process restart. Analytics storage counts live SQLite pages and WAL; history may expire or be evicted early.';
+    }
     const warnings=[];
     if(!a.available)warnings.push('Analytics unavailable. Runtime status is still available.');
     if(a.lagSeconds>30)warnings.push('Ingestion delayed; recent events may be missing.');

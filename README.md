@@ -131,7 +131,7 @@ counts, traffic buckets, rankings, and a filtered, paginated metadata log.
 
 The dashboard refreshes every five seconds while visible. Use the Live control
 to pause updates or Refresh to fetch a new snapshot manually. Traffic uses labeled
-count/time axes and per-interval details. Runtime and analytics details expand
+count/time axes and per-interval details. Runtime and analytics details appear in a compact service panel
 below the main view. Activity uses compact table rows with expandable metadata.
 Its field filters distinguish exact inbox/domain/IP matches from sender/user-agent
 text matches and apply only when submitted; removable chips show active filters,
