@@ -79,10 +79,6 @@
 .admin-health dt { color:var(--muted); }
 .admin-health dd { margin:0; text-align:right; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
 .detail-note { margin-top:14px; color:var(--muted); font-size:11px; line-height:1.6; }
-.admin-footer { display:flex; justify-content:space-between; gap:14px; padding-top:20px; font-size:11px; color:var(--muted); }
-.admin-footer details { text-align:right; max-width:500px; }
-.admin-footer summary { cursor:pointer; }
-.admin-footer p { margin-top:10px; line-height:1.7; }
 .admin-activity-page .admin-filters { align-items:end; padding:14px 16px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); gap:12px; }
 .admin-filters .filter-label { display:none; }
 .admin-activity-page .admin-filters label { flex-direction:column; gap:5px; }
@@ -164,6 +160,5 @@
   .activity-panel>.panel-heading { flex-wrap:wrap; padding:12px; gap:4px; }
   .activity-table-wrap { max-height:60vh; }
   .activity-table { min-width:1040px; }
-  .admin-footer { flex-wrap:wrap; }
 }
 @media(prefers-reduced-motion:reduce) { .refresh-btn[aria-busy="true"] svg { animation:none; } }
