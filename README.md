@@ -132,9 +132,12 @@ counts, traffic buckets, rankings, and a filtered, paginated metadata log.
 The dashboard refreshes every five seconds while visible. Use the Live control
 to pause updates or Refresh to fetch a new snapshot manually. Traffic uses labeled
 count/time axes and per-interval details. Runtime and analytics details appear in a compact service panel
-below the main view. The service panel also shows effective startup limits,
+on Overview. The service panel also shows effective startup limits,
 client-IP attribution, mail expiration, logging, and metrics settings; hover a
-setting to see its environment variable name. Activity uses compact table rows with expandable metadata.
+setting to see its environment variable name. Activity shows history freshness
+without repeating runtime details and uses compact table rows with expandable metadata.
+Its event labels match the filter options: SMTP delivery, SMTP rejection, HTTP
+request, and HTTP poll; HTTP · all types includes both HTTP types.
 Its field filters distinguish exact inbox/domain/IP matches from sender/user-agent
 text matches and apply only when submitted; removable chips show active filters,
 and Clear all restores the default view. Response-code filtering covers HTTP statuses
@@ -145,6 +148,9 @@ per accepted recipient; connection failures may have no sender or recipient.
 Protocol-parser rejections before application callbacks are not recorded. Response times across HTTP, SMTP deliveries, and SMTP rejections can be sorted
 fastest or slowest first. SMTP delivery duration covers DATA reading and storage,
 shared by recipients in that transaction. Older deliveries without timing sort last. Live refresh preserves unapplied edits.
+
+The public header, inbox introduction, and privacy page display the configured
+`MESSAGE_TTL` in readable units, using the same lifetime as message storage.
 
 Admin access has **no application authentication**. A separate port is only a
 network boundary: keep it private using loopback, a private network, or an SSH

@@ -226,14 +226,15 @@
       const row=node('tr',undefined,'admin-event');row.dataset.eventId=e.id;
       const timeCell=node('td',undefined,'event-time'), time=node('time',shortDate(e.timestamp)+' '+eventClock(e.timestamp));
       time.dateTime=e.timestamp;time.title=date(e.timestamp);timeCell.append(time);
-      const kind=node('td',undefined,'event-kind');kind.append(node('span',kindLabels[e.kind==='http'?(e.polling?'httpPoll':'httpOther'):e.kind],'admin-kind '+e.kind));
+      const kindLabel=kindLabels[e.kind==='http'?(e.polling?'httpPoll':'httpOther'):e.kind] || 'Unknown event';
+      const kind=node('td',undefined,'event-kind');kind.append(node('span',kindLabel,'admin-kind '+e.kind));
       const recipient=node('td',e.recipient || e.messageId || '—','event-recipient');recipient.title=e.recipient || e.messageId || '';
       const detail=node('td',e.kind==='smtpRejected'?e.route+' · '+(e.sender || '(empty sender)'):e.kind==='delivery'?(e.sender || '(empty sender)'):e.method+' '+e.route,'event-detail');detail.title=detail.textContent;
       const source=node('td',undefined,'event-source'),ip=node('span',e.ip || 'Unknown');source.append(node('span',e.kind!=='http'?'SMTP':'HTTP','source-label'),ip);source.title=(e.kind!=='http'?'SMTP source IP: ':'HTTP caller IP: ')+(e.ip || 'Unknown');
       const result=node('td',undefined,'event-result');
       if(e.kind==='delivery') {result.append(node('span','250','event-status'),node('span',' · '+responseTime(e),'result-duration'));result.title='SMTP 250 · Accepted recipient delivery · '+bytes(e.size);}
       else {result.append(node('span',e.status,'event-status'+(e.status>=400?' error':'')),node('span',' · '+responseTime(e),'result-duration'));}
-      const action=node('td',undefined,'event-action'),toggle=node('button','›','icon-btn event-expand');toggle.type='button';toggle.setAttribute('aria-label','Details for '+e.kind+' event at '+date(e.timestamp));
+      const action=node('td',undefined,'event-action'),toggle=node('button','›','icon-btn event-expand');toggle.type='button';toggle.setAttribute('aria-label','Details for '+kindLabel+' at '+date(e.timestamp));
       const expanded=node('tr',undefined,'event-expanded'),cell=node('td');cell.colSpan=7;cell.append(eventMetadata(e));expanded.append(cell);
       // Index-based DOM IDs avoid embedding untrusted event IDs into selector syntax.
       expanded.id='event-detail-'+target.children.length;toggle.setAttribute('aria-controls',expanded.id);
@@ -280,7 +281,11 @@
       if(version!==requestVersion)return;
       let warnings='';
       if(status.status==='fulfilled')warnings=health(status.value,data.status==='fulfilled'?data.value.earliest:null);
-      else {warnings='Service status unavailable; ingestion freshness is unknown.';if(activity)$('activity-history').replaceChildren(node('span','Ingestion freshness unavailable'));else empty($('system-metrics'),'Status unavailable');}
+      else {
+        warnings='Service status unavailable; ingestion freshness is unknown.';
+        if(activity)$('activity-history').replaceChildren(node('span','Ingestion freshness unavailable'));
+        else empty($('system-metrics'),'Status unavailable');
+      }
       if(data.status==='rejected')throw data.reason;
       activity?events(data.value):overview(data.value);
       lastSuccess=data.value.generatedAt;$('freshness').dataset.stale='false';freshness();notice(warnings);
