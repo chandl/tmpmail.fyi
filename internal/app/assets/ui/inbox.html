@@ -3,7 +3,7 @@
 {{template "head" .}}
 <title>tmpmail{{if .Address}} - {{.Address}}{{end}}</title>
 </head>
-<body{{if .Messages}} class="has-inbox"{{end}} data-address="{{.Address}}" data-offset="{{.Offset}}">
+<body{{if .Messages}} class="has-inbox"{{end}} data-address="{{.Address}}" data-offset="{{.Offset}}" data-has-more="{{.HasMore}}">
 {{template "header" .}}
 <main id="main" class="wrap">
 {{if .Messages}}{{template "mailbox" .}}{{else}}{{template "start" .}}{{end}}
@@ -81,7 +81,7 @@
 <span class="row-expiry" data-expires="{{$m.ExpiresAt.Format "2006-01-02T15:04:05Z07:00"}}">Expires {{$m.ExpiresAt.Format "15:04 UTC"}}</span>
 </a>{{end}}
 
-{{define "message"}}{{$m := .Message}}<article class="message{{if .Selected}} is-active{{end}}{{if $m.HasHTML}} has-html{{end}}" id="m-{{$m.ID}}" data-message-id="{{$m.ID}}" aria-labelledby="subject-{{$m.ID}}">
+{{define "message"}}{{$m := .Message}}<article class="message{{if .Selected}} is-active{{end}}{{if $m.HasHTML}} has-html{{end}}" id="m-{{$m.ID}}" data-message-id="{{$m.ID}}" data-loaded="{{$m.Loaded}}" aria-labelledby="subject-{{$m.ID}}">
 <header>
 <h2 class="message-subject" id="subject-{{$m.ID}}" tabindex="-1">{{$m.SubjectLabel}}</h2>
 <dl class="meta-grid">

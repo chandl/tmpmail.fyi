@@ -217,8 +217,8 @@
   setInterval(renderTimes, 30000);
 
   const mailbox = $('.mailbox');
-  const known = new Set();
-  let addMessages = null;
+  const pageIDs = $$('.message-list .message-row').map(row => row.dataset.id);
+  const pageHasMore = body.dataset.hasMore === 'true';
 
   if (mailbox) {
     const list = $('.message-list', mailbox);
@@ -293,9 +293,11 @@
           article.dataset.loaded = 'true';
           if (article.classList.contains('is-active') && !article.classList.contains('show-plain')) ensureFrame(article);
         })
-        .catch(() => {
+        .catch(status => {
           article.classList.remove('has-html');
-          text.textContent = 'This message is no longer available. It may have expired.';
+          text.textContent = status === 404
+            ? 'This message is no longer available. It may have expired.'
+            : 'Could not load this message. Select it again to retry.';
         })
         .finally(() => {
           delete article.dataset.loading;
@@ -381,72 +383,8 @@
       else if (key === 'Escape' && mailbox.classList.contains('is-reading')) backButton?.click();
     });
 
-    rows().forEach(row => known.add(row.dataset.id));
     const fromHash = location.hash.startsWith('#m-') && $('#row-' + CSS.escape(location.hash.slice(3)), list);
-    select(fromHash || rows()[0], { remember: false });
-
-    const countLabel = $('[data-count]');
-    const updateCount = () => {
-      if (!countLabel || offset !== 0) return;
-      // Mirrors messageCountLabel in http.go.
-      const count = rows().length;
-      countLabel.textContent = $('[data-older]') ? count + '+ messages' : count + (count === 1 ? ' message' : ' messages');
-    };
-    const rowTemplate = $('#row-template');
-    const messageTemplate = $('#message-template');
-    // "Name <addr>" -> { name, address }; mirrors senderFromHeaders on the server.
-    const parseSender = value => {
-      const match = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(value || '');
-      return match ? { name: match[1].trim(), address: match[2].trim() } : { name: '', address: (value || '').trim() };
-    };
-    addMessages = messages => {
-      if (!rowTemplate || !messageTemplate) return false;
-      // Oldest first, so the newest ends up on top.
-      messages.slice().reverse().forEach(message => {
-        const stamp = (element, attribute, value) => element && element.setAttribute(attribute, value);
-        const row = rowTemplate.content.firstElementChild.cloneNode(true);
-        row.id = 'row-' + message.id;
-        row.dataset.id = message.id;
-        row.href = '#m-' + message.id;
-        const sender = parseSender(message.from);
-        $('.row-from', row).textContent = sender.name || sender.address || 'Unknown sender';
-        stamp($('.row-from', row), 'title', sender.address);
-        $('.row-subject', row).textContent = message.subject || '(no subject)';
-        stamp($('time', row), 'datetime', message.received);
-        row.querySelector('[data-expires]').dataset.expires = message.expiresAt;
-
-        const article = messageTemplate.content.firstElementChild.cloneNode(true);
-        article.id = 'm-' + message.id;
-        article.dataset.messageId = message.id;
-        article.setAttribute('aria-labelledby', 'subject-' + message.id);
-        const subject = $('.message-subject', article);
-        subject.id = 'subject-' + message.id;
-        subject.textContent = message.subject || '(no subject)';
-        const from = $('.meta-from', article);
-        from.textContent = sender.name || sender.address || 'Unknown sender';
-        if (sender.name && sender.address) {
-          const addr = document.createElement('span');
-          addr.className = 'addr';
-          addr.textContent = '<' + sender.address + '>';
-          from.append(' ', addr);
-        }
-        $('.meta-to', article).textContent = message.recipient || address;
-        stamp($('time', article), 'datetime', message.received);
-        article.querySelector('[data-expires]').dataset.expires = message.expiresAt;
-
-        renderTimes(row);
-        renderTimes(article);
-        renderSnippets(article);
-        $('[data-email-dark-toggle]', article)?.setAttribute('aria-pressed', String(root.dataset.emailDark === 'on'));
-        list.prepend(row);
-        reader.append(article);
-        known.add(message.id);
-        row.classList.add('is-new');
-        row.addEventListener('animationend', () => row.classList.remove('is-new'), { once: true });
-      });
-      updateCount();
-      return true;
-    };
+    select(fromHash || rows()[0], { remember: !fromHash });
   }
 
   // Gentle auto-refresh: one small request every 10s while the tab is visible,
@@ -490,10 +428,16 @@
         delay = POLL_MS;
         describe(new Date());
         const page = await response.json();
-        const fresh = (page.messages || []).filter(message => !known.has(message.id));
-        if (!fresh.length) { if (manual) announce('No new messages'); return; }
-        if (!addMessages || !addMessages(fresh)) { location.reload(); return; }
-        announce(fresh.length === 1 ? 'New message: ' + (fresh[0].subject || '(no subject)') : fresh.length + ' new messages');
+        const messages = page.messages || [];
+        // Reload the authoritative first page whenever its membership, order,
+        // or pagination changes. Appending arrivals would grow the DOM forever
+        // and skip messages beyond a 25-message burst. A fresh page keeps Older
+        // at offset 25, so overflow remains reachable. The URL hash preserves
+        // selection if it is still present; otherwise selection falls back.
+        const changed = page.hasMore !== pageHasMore || messages.length !== pageIDs.length ||
+          messages.some((message, index) => message.id !== pageIDs[index]);
+        if (changed) { location.reload(); return; }
+        if (manual) announce('No new messages');
       } catch (_) {
         // Network hiccup: try again on the next tick.
       } finally {
