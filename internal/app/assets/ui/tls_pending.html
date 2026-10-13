@@ -1,0 +1,33 @@
+{{define "tls-pending"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta http-equiv="refresh" content="5">
+<title>Preparing HTTPS · tmpmail</title>
+<style>{{.CSS}}
+body{display:grid;place-items:center;padding:24px}
+.tls-pending{width:100%;max-width:480px;padding:36px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface)}
+.tls-pending .wordmark{display:block;margin-bottom:32px}
+.tls-pending h1{font-size:26px;margin:20px 0 12px}
+.tls-pending p{color:var(--text-2);margin-bottom:16px}
+.tls-pending .domain{font-weight:600;overflow-wrap:anywhere}
+.tls-pending .note{font-size:13px;color:var(--muted)}
+.tls-pending button{padding:10px 16px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface-2);cursor:pointer}
+.spinner{width:32px;height:32px;border:3px solid var(--border-strong);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.spinner{animation:none}}
+@media(max-width:480px){.tls-pending{padding:24px}}
+</style>
+</head>
+<body><main class="tls-pending" aria-labelledby="pending-title">
+<span class="wordmark">tmpmail</span>
+<div class="spinner" aria-hidden="true"></div>
+<h1 id="pending-title">Waiting for a secure connection</h1>
+<p>HTTPS is getting ready for <span class="domain">{{.Domain}}</span>.</p>
+<p>We’ll check again every 5 seconds and take you to your inbox when it’s ready.</p>
+<p class="note">If this takes longer than expected, the server owner may need to check the setup.</p>
+<button type="button" onclick="location.reload()">Check again</button>
+</main></body>
+</html>{{end}}

@@ -377,14 +377,14 @@ func (r *tlsCertificateReloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Cert
 	cert, loadedState, err := loadTLSCertificate(r.certFile, r.keyFile, r.serverName)
 	if err != nil {
 		r.failedReloadState, r.hasFailedReload = state, true
-		log.Printf("SMTP TLS certificate reload failed: %v", err)
+		log.Printf("TLS certificate reload failed: domain=%s error=%v", r.serverName, err)
 		return r.cert, nil
 	}
 	r.cert, r.state, r.hasFailedReload = cert, loadedState, false
 	if r.onReload != nil {
 		r.onReload(cert)
 	}
-	log.Printf("SMTP TLS certificate reloaded")
+	log.Printf("TLS certificate reloaded: domain=%s", r.serverName)
 	return r.cert, nil
 }
 
@@ -419,6 +419,7 @@ func loadTLSCertificate(certFile, keyFile, serverName string) (*tls.Certificate,
 	if before != after {
 		return nil, tlsCertificateState{}, errors.New("certificate files changed while loading")
 	}
+	cert.Leaf = leaf
 	return &cert, after, nil
 }
 

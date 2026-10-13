@@ -23,7 +23,7 @@ import (
 // Exercise the real autocert/ACME flow against a local CA. The CA validates
 // ownership through tmpmail's HTTP handler and signs the actual submitted CSR.
 func TestAutoTLSHTTPValidationAndRenewal(t *testing.T) {
-	cfg := Config{MailDomain: "mail.test", WebDomain: "mail.test", ACMECacheDir: t.TempDir(), ACMEAcceptTOS: true}
+	cfg := Config{AutoTLSWebEnabled: false, AutoTLSSMTPEnabled: true, MailDomain: "mail.test", WebDomain: "mail.test", ACMECacheDir: t.TempDir(), ACMEAcceptTOS: true}
 	a, err := NewAutoTLS(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,10 @@ func TestAutoTLSHTTPValidationAndRenewal(t *testing.T) {
 	defer ca.Close()
 	caURL = ca.URL
 	a.manager.Client.DirectoryURL = ca.URL + "/directory"
-	cert, err := a.manager.GetCertificate(&tls.ClientHelloInfo{ServerName: "mail.test"})
+	if err := a.refreshCertificate(context.Background(), "mail.test"); err != nil {
+		t.Fatal(err)
+	}
+	cert, err := a.GetCertificate(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

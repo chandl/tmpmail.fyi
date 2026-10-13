@@ -54,7 +54,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("configure automatic TLS: %v", err)
 		}
-		provider = automaticTLS
+		if cfg.AutoTLSSMTPEnabled {
+			provider = automaticTLS
+		}
 	}
 	smtpServer, err := app.NewSMTPServerWithCertificate(cfg, store, provider, analytics)
 	if err != nil {
@@ -64,14 +66,33 @@ func main() {
 	httpServer := newHTTPServer(cfg.HTTPAddr, applicationHandler)
 	var httpsServer *http.Server
 	var httpListener, httpsListener net.Listener
+	var manualHTTPS *app.ManualHTTPS
+	if cfg.HTTPSTLSCertFile != "" {
+		manualHTTPS, err = app.NewManualHTTPS(cfg)
+		if err != nil {
+			log.Fatalf("configure manual HTTPS: %v", err)
+		}
+		httpServer.Handler = manualHTTPS.HTTPHandler()
+		httpsServer = newHTTPServer(cfg.HTTPSAddr, manualHTTPS.HTTPSHandler(applicationHandler))
+		httpsServer.TLSConfig = manualHTTPS.TLSConfig()
+	}
 	if automaticTLS != nil {
-		httpServer.Handler = automaticTLS.HTTPHandler()
-		httpsServer = newHTTPServer(cfg.HTTPSAddr, automaticTLS.HTTPSHandler(applicationHandler))
-		httpsServer.TLSConfig = automaticTLS.HTTPSConfig()
+		httpServer.Handler = automaticTLS.HTTPHandler(httpServer.Handler)
+		if cfg.AutoTLSWebEnabled {
+			httpsServer = newHTTPServer(cfg.HTTPSAddr, automaticTLS.HTTPSHandler(applicationHandler))
+			httpsServer.TLSConfig = automaticTLS.HTTPSConfig()
+		}
+	}
+	if manualHTTPS != nil {
+		httpServer.Handler = manualHTTPS.GuardHealth(httpServer.Handler)
+	}
+	if automaticTLS != nil || manualHTTPS != nil {
 		httpListener, err = net.Listen("tcp", cfg.HTTPAddr)
 		if err != nil {
-			log.Fatalf("bind HTTP challenge listener: %v", err)
+			log.Fatalf("bind HTTP listener: %v", err)
 		}
+	}
+	if httpsServer != nil {
 		httpsListener, err = net.Listen("tcp", cfg.HTTPSAddr)
 		if err != nil {
 			httpListener.Close()
@@ -81,8 +102,8 @@ func main() {
 
 	errCh := make(chan error, 5)
 	go func() {
-		if automaticTLS != nil {
-			if err := automaticTLS.WaitReady(ctx); err != nil {
+		if cfg.AutoTLSSMTPEnabled {
+			if err := automaticTLS.WaitSMTPReady(ctx); err != nil {
 				return
 			}
 		}
@@ -97,6 +118,8 @@ func main() {
 			}
 			errCh <- err
 		}()
+	}
+	if automaticTLS != nil {
 		go automaticTLS.Run(ctx)
 	}
 	go func() {

@@ -245,6 +245,24 @@ The named volume holds `mail.db`, optional `analytics.db` (including its WAL), a
 
 The included Compose file serves the UI directly on port `8080` over HTTP. To use HTTPS, place your preferred reverse proxy in front of `http://127.0.0.1:8080`; or enable built-in automatic TLS with the standalone deployment below.
 
+### Manual HTTPS certificates (optional)
+
+Supply a certificate chain and private key readable by tmpmail, and disable automatic web TLS:
+
+```dotenv
+AUTO_TLS_WEB_ENABLED=false
+AUTO_TLS_SMTP_ENABLED=false
+WEB_DOMAIN=inbox.example.com
+HTTPS_TLS_CERT_FILE=/certs/web-fullchain.pem
+HTTPS_TLS_KEY_FILE=/certs/web-privkey.pem
+```
+
+Use `docker compose -f compose.tls.yaml up -d --build` for the public port mappings. Stage the files in the existing read-only `/certs` mount (the `smtp-certs` volume), or replace that mount with a read-only directory containing your certificate files. Both HTTPS file settings are required together. `WEB_DOMAIN` defaults to `MAIL_DOMAIN`; the certificate must cover that hostname and be currently valid. `HTTPS_ADDR` controls the HTTPS listener (default `:8443`). HTTP redirects to HTTPS and retains the local health endpoint.
+
+Manual HTTPS uses the same file reload mechanism as SMTP: a complete valid replacement is adopted on the next handshake, while incomplete or invalid replacements leave the last valid pair active. An external certificate manager must handle issuance and renewal. Expired HTTPS certificates fail handshakes and health checks. No CA account, staging setting or terms acceptance is needed when both automatic TLS toggles are disabled.
+
+Manual web certificates can be combined with automatic SMTP TLS: set `AUTO_TLS_SMTP_ENABLED=true` and `ACME_ACCEPT_TOS=true`, keeping `AUTO_TLS_WEB_ENABLED=false`. HTTP validation remains available for the mail hostname, and no automatic certificate is requested for a distinct manual web hostname. You can also supply manual SMTP certificates using the existing SMTP file settings, independently of the web mode. Automatic and manual certificates cannot both be configured for the same service.
+
 ### Built-in automatic TLS (optional)
 
 Copy `.env.example` to `.env`, set the domain and enable automatic TLS:
@@ -258,7 +276,7 @@ ACME_EMAIL=admin@example.com
 # WEB_DOMAIN=inbox.example.com
 ```
 
-Leave `SMTP_TLS_CERT_FILE` and `SMTP_TLS_KEY_FILE` empty; manual certificate files and automatic mode are mutually exclusive. `MAIL_DOMAIN` must also be the SMTP hostname used by the MX record in this deployment. Both certificate hostnames must have public A/AAAA records pointing to the host; any published IPv6 address must also work. Allow public TCP 25, 80, and 443. Keep port 80 reachable for renewals. No DNS API credentials are needed.
+Leave `SMTP_TLS_CERT_FILE` and `SMTP_TLS_KEY_FILE` empty; manual SMTP certificate files and automatic SMTP TLS are mutually exclusive. Manual SMTP certificates can be used alongside automatic web TLS. `MAIL_DOMAIN` must also be the SMTP hostname used by the MX record when automatic SMTP TLS is enabled. Hostnames with automatic TLS enabled must have public A/AAAA records pointing to the host; any published IPv6 address must also work. Allow public TCP 25, 80, and 443. Keep port 80 reachable for renewals. No DNS API credentials are needed.
 
 ```sh
 docker compose -f compose.tls.yaml up -d --build
@@ -268,20 +286,38 @@ docker compose -f compose.tls.yaml up -d --build
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `AUTO_TLS_ENABLED` | `false` | Enable automatic certificates for HTTPS and SMTP STARTTLS. |
+| `AUTO_TLS_ENABLED` | `false` | Default for both service toggles. |
+| `AUTO_TLS_WEB_ENABLED` | `AUTO_TLS_ENABLED` | Override automatic HTTPS for the UI/API. |
+| `AUTO_TLS_SMTP_ENABLED` | `AUTO_TLS_ENABLED` | Override automatic SMTP STARTTLS. |
 | `WEB_DOMAIN` | `MAIL_DOMAIN` | Optional separate UI/API hostname. |
 | `ACME_ACCEPT_TOS` | `false` | Required acceptance of the CA subscriber terms in automatic mode. |
 | `ACME_EMAIL` | Empty | Optional ACME account contact address; changing it does not update an already registered account. |
+| `ACME_DEBUG` | `false` | Log ACME request/response metadata for troubleshooting. Network errors and HTTP error statuses are logged even when disabled. |
 | `ACME_STAGING` | `false` | Use the Let's Encrypt test environment; its certificates are not publicly trusted. |
 | `ACME_CACHE_DIR` | `DATA_DIR/acme` | Persistent certificate and ACME account storage, separated into production/staging directories. |
 | `HTTP_ADDR` | `:8080` | Challenges, health checks, and redirects in automatic mode. |
+| `HTTPS_TLS_CERT_FILE` / `HTTPS_TLS_KEY_FILE` | Empty | Manual HTTPS certificate chain and private key; incompatible with automatic web TLS. |
 | `HTTPS_ADDR` | `:8443` | HTTPS application listener; expose it publicly on port 443. |
+
+For example, keep HTTPS but disable automatic SMTP TLS:
+
+```dotenv
+AUTO_TLS_ENABLED=true
+AUTO_TLS_WEB_ENABLED=true
+AUTO_TLS_SMTP_ENABLED=false
+```
+
+For SMTP-only automatic TLS, use `AUTO_TLS_WEB_ENABLED=false` and `AUTO_TLS_SMTP_ENABLED=true`. The UI/API continues serving HTTP, and the HTTP listener answers certificate challenges. No HTTPS listener or redirects are started in that mode; keep public port 80 reachable for SMTP certificate validation. Set both overrides to `false` to disable automatic TLS entirely. Disabling automatic SMTP TLS preserves manually supplied SMTP certificates, or plaintext SMTP if none are configured. Only enabled services' hostnames are requested; no certificate is requested for a disabled service's distinct hostname. A valid web certificate allows the UI to open even if SMTP provisioning fails, and vice versa.
 
 Autocert handles issuance and lifetime-based renewal. HTTP-01 validation is enabled; autocert may also use TLS-ALPN-01 on port 443. The service requests only configured hostnames. SMTP uses an RSA certificate for broad client compatibility and supports clients without TLS SNI; HTTPS uses the configured web hostname's certificate. Certificates are served from memory, with renewal updates adopted within a minute, and persisted atomically by autocert. No manual PEM installation or restart is needed.
 
-At first start, HTTP and HTTPS listeners run so validation can complete, but normal TLS handshakes fail until certificates are available. SMTP starts after both configured hostnames have valid certificates. `/healthz` on the HTTP listener returns 503 while provisioning is pending and 204 when the certificates are ready. Initial issuance failures retry with backoff capped at one hour. During renewal failures, the current valid certificates remain active; expired certificates fail TLS handshakes and make health checks unhealthy. STARTTLS remains advertised after expiry, and TLS upgrades fail rather than downgrade. As with the existing SMTP receiver, senders may choose plaintext SMTP; automatic mode does not require encryption for inbound delivery. Private metrics and admin listeners remain private and use their existing configuration.
+At first start, HTTP and HTTPS listeners run so validation can complete, but normal TLS handshakes fail until the web certificate is available. With web auto TLS enabled, HTTP visitors see a loading page with status 503 that refreshes every five seconds; once the web certificate is ready, the same request redirects to HTTPS with its path and query preserved. Pending pages and redirects are not cached, so visitors can see the loading page again if a certificate expires. Each service becomes available independently: SMTP with automatic TLS waits only for its mail certificate, and HTTPS redirects wait only for the web certificate. SMTP without automatic TLS starts normally. `/healthz` on the HTTP listener returns 503 while provisioning is pending and 204 when the certificates are ready. Initial issuance failures retry with backoff capped at one hour. During renewal failures, the current valid certificates remain active; expired certificates fail TLS handshakes and make health checks unhealthy. STARTTLS remains advertised after expiry, and TLS upgrades fail rather than downgrade. As with the existing SMTP receiver, senders may choose plaintext SMTP; automatic mode does not require encryption for inbound delivery. Private metrics and admin listeners remain private and use their existing configuration.
 
 Try `ACME_STAGING=true` first to verify DNS and port routing, then switch it to `false` and recreate the container for trusted certificates. Do not repeatedly delete the cache: it holds private keys and account state, avoids unnecessary issuance, and should be preserved across upgrades. Its directory is created with mode 0700 and cache files with mode 0600; protect backups accordingly. This deployment supports one instance owning the cache. If another proxy already owns ports 80/443, use the existing manual certificate/reverse proxy deployment instead.
+
+To troubleshoot provisioning, watch `docker compose -f compose.tls.yaml logs -f --tail=200 tmpmail`. Startup logs show the CA environment, configured domains and cache directory. Pending attempts log their start, progress every 30 seconds, completion and next retry time. Network errors and ACME HTTP error statuses also appear during background renewal. For more detail, set `ACME_DEBUG=true` in `.env`, recreate the container with `docker compose -f compose.tls.yaml up -d --build --force-recreate`, and follow the logs again. Debug logging includes methods, endpoints, status codes and durations, but excludes account keys, request/response bodies, headers and URL queries. Turn it off after troubleshooting.
+
+Check public A/AAAA records for **every** hostname with automatic TLS enabled, port mappings, firewall rules, and any proxy in front of the server. The public `/healthz` endpoint reports 503 until all certificates are ready. A request to `http://HOST/.well-known/acme-challenge/probe` should reach tmpmail and return 404 for the nonexistent token, without authentication or a redirect to HTTPS. HTTPS handshake failures are expected before initial issuance completes. Staging certificates are not trusted by browsers; use production once validation works. Do not delete the certificate cache to retry.
 
 Dependency license texts are included in `THIRD_PARTY_NOTICES` and copied with the project license to `/usr/share/licenses/tmpmail/` in the container. Include those files when distributing a standalone binary.
 

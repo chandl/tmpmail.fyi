@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ import (
 
 func testAutoTLS(t *testing.T) *AutoTLS {
 	t.Helper()
-	a, err := NewAutoTLS(Config{MailDomain: "mail.test", WebDomain: "web.test", ACMECacheDir: t.TempDir(), ACMEAcceptTOS: true})
+	a, err := NewAutoTLS(Config{AutoTLSWebEnabled: true, AutoTLSSMTPEnabled: true, MailDomain: "mail.test", WebDomain: "web.test", ACMECacheDir: t.TempDir(), ACMEAcceptTOS: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,8 +36,8 @@ func TestAutoTLSRedirectAndReadiness(t *testing.T) {
 		status   int
 		location string
 	}{
-		{"http://web.test/inbox?inbox=hello", http.StatusPermanentRedirect, "https://web.test/inbox?inbox=hello"},
-		{"http://mail.test/", http.StatusPermanentRedirect, "https://web.test/"},
+		{"http://web.test/inbox?inbox=hello", http.StatusServiceUnavailable, ""},
+		{"http://mail.test/", http.StatusServiceUnavailable, ""},
 		{"http://evil.test/", http.StatusBadRequest, ""},
 		{"http://127.0.0.1:8080/healthz", http.StatusServiceUnavailable, ""},
 		{"http://web.test/.well-known/acme-challenge/missing", http.StatusNotFound, ""},
@@ -45,6 +46,19 @@ func TestAutoTLSRedirectAndReadiness(t *testing.T) {
 		handler.ServeHTTP(w, httptest.NewRequest("GET", tt.target, nil))
 		if w.Code != tt.status || w.Header().Get("Location") != tt.location {
 			t.Fatalf("%s: status=%d location=%q", tt.target, w.Code, w.Header().Get("Location"))
+		}
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(method, "http://web.test/inbox?inbox=hello", nil))
+		if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "5" || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("pending %s: status=%d headers=%v", method, w.Code, w.Header())
+		}
+		if method == http.MethodGet && (!strings.Contains(w.Body.String(), "Waiting for a secure connection") || !strings.Contains(w.Body.String(), `http-equiv="refresh" content="5"`) || !strings.Contains(w.Body.String(), "web.test")) {
+			t.Fatal("pending page missing status, domain or automatic refresh")
+		}
+		if method == http.MethodHead && w.Body.Len() != 0 {
+			t.Fatal("HEAD returned a body")
 		}
 	}
 	for _, host := range a.domains {
@@ -60,6 +74,17 @@ func TestAutoTLSRedirectAndReadiness(t *testing.T) {
 	if !a.Ready() {
 		t.Fatal("expected ready certificates")
 	}
+	for _, tt := range []struct{ target, location string }{
+		{"http://web.test/inbox?inbox=hello", "https://web.test/inbox?inbox=hello"},
+		{"http://mail.test/", "https://web.test/"},
+	} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", tt.target, nil))
+		if w.Code != http.StatusPermanentRedirect || w.Header().Get("Location") != tt.location || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("ready redirect: status=%d headers=%v", w.Code, w.Header())
+		}
+	}
+
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest("GET", "http://127.0.0.1:8080/healthz", nil))
 	if w.Code != http.StatusNoContent {
@@ -80,6 +105,15 @@ func TestAutoTLSRedirectAndReadiness(t *testing.T) {
 	if _, err := a.GetCertificate(nil); err == nil {
 		t.Fatal("expired certificate served")
 	}
+	a.mu.Lock()
+	a.certs[a.webDomain].Leaf.NotAfter = time.Now().Add(-time.Minute)
+	a.mu.Unlock()
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest("GET", "http://web.test/inbox?inbox=hello", nil))
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Location") != "" {
+		t.Fatal("expired HTTPS certificate still redirects visitors")
+	}
+
 }
 
 func TestAutoTLSReusesPersistentCacheWithoutACME(t *testing.T) {
@@ -100,7 +134,7 @@ func TestAutoTLSReusesPersistentCacheWithoutACME(t *testing.T) {
 	if err := cache.Put(context.Background(), "mail.test+rsa", append(keyPEM, certPEM...)); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{MailDomain: "mail.test", WebDomain: "mail.test", ACMECacheDir: root, ACMEAcceptTOS: true}
+	cfg := Config{AutoTLSWebEnabled: true, AutoTLSSMTPEnabled: true, MailDomain: "mail.test", WebDomain: "mail.test", ACMECacheDir: root, ACMEAcceptTOS: true}
 	for i := 0; i < 2; i++ {
 		a, err := NewAutoTLS(cfg)
 		if err != nil {
