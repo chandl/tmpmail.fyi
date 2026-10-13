@@ -245,6 +245,8 @@ The named volume holds `mail.db`, optional `analytics.db` (including its WAL), a
 
 The included Compose file serves the UI directly on port `8080` over HTTP. To use HTTPS, place your preferred reverse proxy in front of `http://127.0.0.1:8080`; or enable built-in automatic TLS with the standalone deployment below.
 
+The private admin overview includes separate **Web TLS** and **SMTP TLS** cards showing automatic/manual/off mode, configured hostname, readiness, expiry and time remaining. Staging certificates and certificates expiring within seven days are highlighted. Expand certificate details to inspect the issuer, validity start, DNS names and SHA-256 fingerprint. These details refresh with the existing admin polling, read active certificate state without starting ACME requests, and exclude private keys, file paths, account credentials and contact email.
+
 ### Manual HTTPS certificates (optional)
 
 Supply a certificate chain and private key readable by tmpmail, and disable automatic web TLS:

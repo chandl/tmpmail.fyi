@@ -185,3 +185,10 @@
 .admin-kind.smtpRejected { color:var(--danger); background:color-mix(in srgb,var(--danger) 10%,transparent); }
 
 @media(min-width:561px) and (max-width:900px) { .admin-activity-page .admin-filters { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+/* Certificate details use one card per service. */
+.tls-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+.tls-metrics dd{overflow-wrap:anywhere;white-space:normal}
+.tls-details{margin-top:12px}
+.tls-details summary{cursor:pointer;color:var(--muted);font-size:13px}
+@media(max-width:600px){.tls-metrics{grid-template-columns:1fr}}

@@ -101,6 +101,35 @@
       fill.style.width=(rank.count/Math.max(1,ranks[0].count)*100)+'%';track.append(fill);a.append(line,track);target.append(a);
     }
   }
+  function tlsHealth(tls) {
+    const target=$('tls-metrics');target.replaceChildren();
+    const states={off:'Off',pending:'Pending',ready:'Ready',expired:'Expired',not_yet_valid:'Not yet valid',unavailable:'Unavailable'};
+    for(const [key,label] of [['web','Web TLS'],['smtp','SMTP TLS']]) {
+      const service=tls?.[key] || {mode:'off',state:'off'};
+      const warn=(service.mode!=='off'&&service.state!=='ready') || service.expiringSoon || service.environment==='staging';
+      const card=node('section',undefined,'system-metric'+(warn?' warning':''));
+      const heading=node('div',undefined,'system-metric-heading');heading.append(node('h2',label),node('strong',states[service.state] || 'Unavailable'));card.append(heading);
+      const dl=node('dl');
+      const add=(target,key,value,title)=>{const row=node('div'),detail=node('dd',value);detail.title=title || value;row.append(node('dt',key),detail);target.append(row);};
+      add(dl,'Mode',({off:'Disabled',automatic:'Automatic',manual:'Manual'})[service.mode] || 'Unknown');
+      add(dl,'Hostname',service.domain || '—');
+      if(service.environment)add(dl,'CA environment',service.environment==='staging'?'Staging · untrusted':'Production');
+      if(service.notAfter) {
+        const seconds=Math.max(0,(new Date(service.notAfter)-new Date())/1000), days=Math.floor(seconds/86400);
+        const remaining=days>0?`${days} ${days===1?'day':'days'}`:duration(seconds);
+        add(dl,'Expires',date(service.notAfter));
+        if(service.state==='ready')add(dl,'Remaining',`${remaining}${service.expiringSoon?' · expires soon':''}`);
+      }
+      if(service.state==='pending')add(dl,'Provisioning','Waiting for a certificate');
+      card.append(dl);
+      if(service.notBefore) {
+        const details=node('details',undefined,'tls-details');details.append(node('summary','Certificate details'));
+        const cert=node('dl');add(cert,'Valid from',date(service.notBefore));add(cert,'Issuer',service.issuer || '—');
+        add(cert,'DNS names',(service.dnsNames || []).join(', ') || '—');add(cert,'SHA-256',service.fingerprintSHA256 || '—');details.append(cert);card.append(details);
+      }
+      target.append(card);
+    }
+  }
   function health(s, earliest) {
     const smtp=s.smtp || {}, store=s.store || {}, a=s.analytics || {}, cfg=s.settings || {};
     const limit = value => Number(value)>0?num(value):'Unlimited';
@@ -111,9 +140,10 @@
     $('ingestion').textContent=ingestionText; $('ingestion').title='Dropped events since process start; crash losses may be uncounted.';
     $('activity-history').replaceChildren(node('span',historyText),node('span',ingestionText));
     if(!activity) {
+      tlsHealth(s.tls);
       const cards=[
         ['Process','Running',false,[['Uptime',duration(s.uptimeSeconds)],['Heap',bytes(s.memoryBytes)],['Goroutines',num(s.goroutines)]]],
-        ['SMTP',`${num(smtp.activeConnections)} / ${num(smtp.connectionLimit)}`,smtp.tlsEnabled && new Date(smtp.tlsNotAfter)<new Date(),[['Per-IP limit',limit(cfg.smtpPerIP),'SMTP_MAX_CONNECTIONS_PER_IP'],['Recipients',num(cfg.smtpRecipients),'SMTP_MAX_RECIPIENTS'],['Message size',bytes(cfg.maxMessageBytes),'MAX_MESSAGE_BYTES'],['TLS',smtp.tlsEnabled?'Enabled':'Off'],...(smtp.tlsEnabled?[['Expires',shortDate(smtp.tlsNotAfter)]]:[])]],
+        ['SMTP',`${num(smtp.activeConnections)} / ${num(smtp.connectionLimit)}`,smtp.tlsEnabled && new Date(smtp.tlsNotAfter)<new Date(),[['Per-IP limit',limit(cfg.smtpPerIP),'SMTP_MAX_CONNECTIONS_PER_IP'],['Recipients',num(cfg.smtpRecipients),'SMTP_MAX_RECIPIENTS'],['Message size',bytes(cfg.maxMessageBytes),'MAX_MESSAGE_BYTES']]],
         ['Mail',bytes(store.storedBytes),false,[['Budget',bytes(s.messageStorageBudgetBytes),'MAX_STORAGE_BYTES'],['Messages',num(store.storedMessages)],['Expiration',duration(cfg.messageTTLSeconds),'MESSAGE_TTL']]],
         ['Cleanup',store.cleanupErrors?num(store.cleanupErrors)+' errors':'OK',store.cleanupErrors>0,[['Last run',store.lastCleanup?clock(store.lastCleanup):'Not yet'],['Errors',num(store.cleanupErrors)]]],
         ['Analytics',a.available?'Connected':'Unavailable',!a.available,[['Storage',bytes(a.storageBytes)],['Budget',bytes(s.storageBudgetBytes),'ANALYTICS_MAX_STORAGE_BYTES'],['Retention',num(s.retentionHours/24)+' days','ANALYTICS_EVENT_TTL'],['History from',first?shortDate(first):'None'],['Early evictions',num(a.earlyEvictedEvents)]]],
