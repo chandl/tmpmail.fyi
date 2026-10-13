@@ -6,10 +6,11 @@ COPY . .
 RUN CGO_ENABLED=1 go build -trimpath -ldflags='-s -w' -o /out/tmpmail ./cmd/tmpmail
 
 FROM alpine:3.22
-RUN addgroup -S tmpmail && adduser -S -G tmpmail tmpmail && mkdir /data && chown tmpmail:tmpmail /data
+RUN apk add --no-cache ca-certificates && addgroup -S tmpmail && adduser -S -G tmpmail tmpmail && mkdir /data && chown tmpmail:tmpmail /data
 COPY --from=build /out/tmpmail /tmpmail
+COPY LICENSE THIRD_PARTY_NOTICES /usr/share/licenses/tmpmail/
 USER tmpmail:tmpmail
-EXPOSE 25 8080 9090
+EXPOSE 25 8080 8443 9090
 VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 CMD ["/tmpmail", "healthcheck"]
 ENTRYPOINT ["/tmpmail"]

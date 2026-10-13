@@ -243,7 +243,47 @@ The named volume holds `mail.db`, optional `analytics.db` (including its WAL), a
 
 ### HTTPS (optional)
 
-The included Compose file serves the UI directly on port `8080` over HTTP. To use HTTPS, place your preferred reverse proxy in front of `http://127.0.0.1:8080`; certificate management is deliberately outside this minimal deployment.
+The included Compose file serves the UI directly on port `8080` over HTTP. To use HTTPS, place your preferred reverse proxy in front of `http://127.0.0.1:8080`; or enable built-in automatic TLS with the standalone deployment below.
+
+### Built-in automatic TLS (optional)
+
+Copy `.env.example` to `.env`, set the domain and enable automatic TLS:
+
+```dotenv
+MAIL_DOMAIN=mail.example.com
+AUTO_TLS_ENABLED=true
+ACME_ACCEPT_TOS=true
+ACME_EMAIL=admin@example.com
+# Optional separate UI/API hostname; otherwise MAIL_DOMAIN is used:
+# WEB_DOMAIN=inbox.example.com
+```
+
+Leave `SMTP_TLS_CERT_FILE` and `SMTP_TLS_KEY_FILE` empty; manual certificate files and automatic mode are mutually exclusive. `MAIL_DOMAIN` must also be the SMTP hostname used by the MX record in this deployment. Both certificate hostnames must have public A/AAAA records pointing to the host; any published IPv6 address must also work. Allow public TCP 25, 80, and 443. Keep port 80 reachable for renewals. No DNS API credentials are needed.
+
+```sh
+docker compose -f compose.tls.yaml up -d --build
+```
+
+`compose.tls.yaml` is a standalone alternative to `compose.yaml`, not an override. It maps public ports 80/443 to unprivileged container listeners 8080/8443 and does not publish port 8080 separately. Stop the old Compose deployment before switching, retaining its data volume. Use the same Compose project name so the existing `tmpmail-data` volume is reused. Open `https://mail.example.com` (or the configured `WEB_DOMAIN`).
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `AUTO_TLS_ENABLED` | `false` | Enable automatic certificates for HTTPS and SMTP STARTTLS. |
+| `WEB_DOMAIN` | `MAIL_DOMAIN` | Optional separate UI/API hostname. |
+| `ACME_ACCEPT_TOS` | `false` | Required acceptance of the CA subscriber terms in automatic mode. |
+| `ACME_EMAIL` | Empty | Optional ACME account contact address; changing it does not update an already registered account. |
+| `ACME_STAGING` | `false` | Use the Let's Encrypt test environment; its certificates are not publicly trusted. |
+| `ACME_CACHE_DIR` | `DATA_DIR/acme` | Persistent certificate and ACME account storage, separated into production/staging directories. |
+| `HTTP_ADDR` | `:8080` | Challenges, health checks, and redirects in automatic mode. |
+| `HTTPS_ADDR` | `:8443` | HTTPS application listener; expose it publicly on port 443. |
+
+Autocert handles issuance and lifetime-based renewal. HTTP-01 validation is enabled; autocert may also use TLS-ALPN-01 on port 443. The service requests only configured hostnames. SMTP uses an RSA certificate for broad client compatibility and supports clients without TLS SNI; HTTPS uses the configured web hostname's certificate. Certificates are served from memory, with renewal updates adopted within a minute, and persisted atomically by autocert. No manual PEM installation or restart is needed.
+
+At first start, HTTP and HTTPS listeners run so validation can complete, but normal TLS handshakes fail until certificates are available. SMTP starts after both configured hostnames have valid certificates. `/healthz` on the HTTP listener returns 503 while provisioning is pending and 204 when the certificates are ready. Initial issuance failures retry with backoff capped at one hour. During renewal failures, the current valid certificates remain active; expired certificates fail TLS handshakes and make health checks unhealthy. STARTTLS remains advertised after expiry, and TLS upgrades fail rather than downgrade. As with the existing SMTP receiver, senders may choose plaintext SMTP; automatic mode does not require encryption for inbound delivery. Private metrics and admin listeners remain private and use their existing configuration.
+
+Try `ACME_STAGING=true` first to verify DNS and port routing, then switch it to `false` and recreate the container for trusted certificates. Do not repeatedly delete the cache: it holds private keys and account state, avoids unnecessary issuance, and should be preserved across upgrades. Its directory is created with mode 0700 and cache files with mode 0600; protect backups accordingly. This deployment supports one instance owning the cache. If another proxy already owns ports 80/443, use the existing manual certificate/reverse proxy deployment instead.
+
+Dependency license texts are included in `THIRD_PARTY_NOTICES` and copied with the project license to `/usr/share/licenses/tmpmail/` in the container. Include those files when distributing a standalone binary.
 
 ### Operations
 

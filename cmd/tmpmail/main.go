@@ -47,17 +47,66 @@ func main() {
 
 	analytics := app.OpenAnalytics(cfg)
 	defer analytics.Close()
-	smtpServer, err := app.NewSMTPServer(cfg, store, analytics)
+	var automaticTLS *app.AutoTLS
+	var provider app.CertificateProvider
+	if cfg.AutoTLSEnabled {
+		automaticTLS, err = app.NewAutoTLS(cfg)
+		if err != nil {
+			log.Fatalf("configure automatic TLS: %v", err)
+		}
+		provider = automaticTLS
+	}
+	smtpServer, err := app.NewSMTPServerWithCertificate(cfg, store, provider, analytics)
 	if err != nil {
 		log.Fatalf("configure SMTP server: %v", err)
 	}
-	httpServer := newHTTPServer(cfg.HTTPAddr, app.NewHTTPServer(cfg, store, analytics))
+	applicationHandler := app.NewHTTPServer(cfg, store, analytics)
+	httpServer := newHTTPServer(cfg.HTTPAddr, applicationHandler)
+	var httpsServer *http.Server
+	var httpListener, httpsListener net.Listener
+	if automaticTLS != nil {
+		httpServer.Handler = automaticTLS.HTTPHandler()
+		httpsServer = newHTTPServer(cfg.HTTPSAddr, automaticTLS.HTTPSHandler(applicationHandler))
+		httpsServer.TLSConfig = automaticTLS.HTTPSConfig()
+		httpListener, err = net.Listen("tcp", cfg.HTTPAddr)
+		if err != nil {
+			log.Fatalf("bind HTTP challenge listener: %v", err)
+		}
+		httpsListener, err = net.Listen("tcp", cfg.HTTPSAddr)
+		if err != nil {
+			httpListener.Close()
+			log.Fatalf("bind HTTPS listener: %v", err)
+		}
+	}
 
-	errCh := make(chan error, 4)
-	go func() { errCh <- smtpServer.ListenAndServe(ctx) }()
+	errCh := make(chan error, 5)
+	go func() {
+		if automaticTLS != nil {
+			if err := automaticTLS.WaitReady(ctx); err != nil {
+				return
+			}
+		}
+		errCh <- smtpServer.ListenAndServe(ctx)
+	}()
+	if httpsServer != nil {
+		go func() {
+			log.Printf("HTTPS listening on %s", cfg.HTTPSAddr)
+			err := httpsServer.ServeTLS(httpsListener, "", "")
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			errCh <- err
+		}()
+		go automaticTLS.Run(ctx)
+	}
 	go func() {
 		log.Printf("HTTP listening on %s", cfg.HTTPAddr)
-		err := httpServer.ListenAndServe()
+		var err error
+		if httpListener != nil {
+			err = httpServer.Serve(httpListener)
+		} else {
+			err = httpServer.ListenAndServe()
+		}
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}
@@ -97,10 +146,16 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	stop()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("HTTP shutdown: %v", err)
+	}
+	if httpsServer != nil {
+		if err := httpsServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("HTTPS shutdown: %v", err)
+		}
 	}
 	if metricsServer != nil {
 		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
