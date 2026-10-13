@@ -29,6 +29,8 @@ type CertificateProvider interface {
 type AutoTLS struct {
 	manager               *autocert.Manager
 	webDomain, mailDomain string
+	webEnabled            bool
+	smtpEnabled           bool
 	domains               []string
 	mu                    sync.RWMutex
 	certs                 map[string]*tls.Certificate
@@ -75,14 +77,20 @@ func NewAutoTLS(cfg Config) (*AutoTLS, error) {
 	}
 	probe.Close()
 	os.Remove(probe.Name())
-	a := &AutoTLS{mailDomain: cfg.MailDomain, webDomain: cfg.WebDomain, certs: make(map[string]*tls.Certificate), ready: make(chan struct{})}
-	a.domains = []string{cfg.MailDomain}
-	if cfg.WebDomain != cfg.MailDomain {
+	a := &AutoTLS{mailDomain: cfg.MailDomain, webDomain: cfg.WebDomain, webEnabled: cfg.AutoTLSWebEnabled, smtpEnabled: cfg.AutoTLSSMTPEnabled, certs: make(map[string]*tls.Certificate), ready: make(chan struct{})}
+	if cfg.AutoTLSWebEnabled {
 		a.domains = append(a.domains, cfg.WebDomain)
 	}
-	a.manager = &autocert.Manager{Prompt: autocert.AcceptTOS, Cache: autocert.DirCache(cacheDir), Email: cfg.ACMEEmail, HostPolicy: autocert.HostWhitelist(a.domains...), Client: &acme.Client{DirectoryURL: directory}}
+	if cfg.AutoTLSSMTPEnabled && (!cfg.AutoTLSWebEnabled || cfg.MailDomain != cfg.WebDomain) {
+		a.domains = append(a.domains, cfg.MailDomain)
+	}
+	if len(a.domains) == 0 {
+		return nil, errors.New("automatic TLS requires an enabled web or SMTP service")
+	}
+	a.manager = &autocert.Manager{Prompt: autocert.AcceptTOS, Cache: autocert.DirCache(cacheDir), Email: cfg.ACMEEmail, HostPolicy: autocert.HostWhitelist(a.domains...), Client: &acme.Client{DirectoryURL: directory, HTTPClient: &http.Client{Transport: &acmeLogTransport{base: http.DefaultTransport, debug: cfg.ACMEDebug, logf: log.Printf}}}}
 	// Register HTTP-01 before the first issuance. Autocert may also use TLS-ALPN-01.
 	a.manager.HTTPHandler(nil)
+	log.Printf("automatic TLS configured: environment=%s web=%t smtp=%t domains=%s cache=%s debug=%t", environment, cfg.AutoTLSWebEnabled, cfg.AutoTLSSMTPEnabled, strings.Join(a.domains, ","), cacheDir, cfg.ACMEDebug)
 	return a, nil
 }
 
@@ -96,6 +104,24 @@ func (a *AutoTLS) Ready() bool {
 		}
 	}
 	return true
+}
+
+func (a *AutoTLS) WebReady() bool { _, err := a.certificate(a.webDomain); return err == nil }
+
+// SMTP startup only waits for its own certificate, independently of the UI.
+func (a *AutoTLS) WaitSMTPReady(ctx context.Context) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := a.certificate(a.mailDomain); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (a *AutoTLS) WaitReady(ctx context.Context) error {
@@ -112,18 +138,21 @@ func (a *AutoTLS) WaitReady(ctx context.Context) error {
 func (a *AutoTLS) Run(ctx context.Context) {
 	delay := time.Minute
 	for {
+		var attempts sync.WaitGroup
 		for _, host := range a.domains {
 			if ctx.Err() != nil {
 				return
 			}
-			cert, err := a.manager.GetCertificate(&tls.ClientHelloInfo{ServerName: host})
-			if err == nil {
-				err = a.activate(host, cert)
-			}
-			if err != nil {
-				log.Printf("automatic TLS for %s: %v", host, err)
-			}
+			attempts.Add(1)
+			go func(host string) {
+				defer attempts.Done()
+				if err := a.refreshCertificate(ctx, host); err != nil {
+					log.Printf("automatic TLS for %s: %v", host, err)
+				}
+			}(host)
 		}
+		attempts.Wait()
+
 		if a.Ready() {
 			a.once.Do(func() { log.Printf("automatic TLS certificates ready"); close(a.ready) })
 			delay = time.Minute
@@ -133,6 +162,9 @@ func (a *AutoTLS) Run(ctx context.Context) {
 				delay = time.Hour
 			}
 		}
+		if !a.Ready() {
+			log.Printf("automatic TLS not ready: retry_in=%s next_attempt=%s; check DNS and public ports 80/443 for all configured domains", delay, time.Now().Add(delay).UTC().Format(time.RFC3339))
+		}
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -141,6 +173,65 @@ func (a *AutoTLS) Run(ctx context.Context) {
 		case <-timer.C:
 		}
 	}
+}
+
+// refreshCertificate reports progress while autocert waits for CA validation.
+// Normal polling of an already active certificate stays quiet.
+func (a *AutoTLS) refreshCertificate(ctx context.Context, host string) error {
+	_, err := a.certificate(host)
+	pending := err != nil
+	started := time.Now()
+	if pending {
+		log.Printf("automatic TLS certificate lookup/issuance started: domain=%s", host)
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					log.Printf("automatic TLS still waiting for certificate: domain=%s elapsed=%s", host, time.Since(started).Round(time.Second))
+				}
+			}
+		}()
+	}
+	cert, err := a.manager.GetCertificate(&tls.ClientHelloInfo{ServerName: host})
+	if err == nil {
+		err = a.activate(host, cert)
+	}
+	if pending {
+		log.Printf("automatic TLS certificate attempt finished: domain=%s elapsed=%s success=%t", host, time.Since(started).Round(time.Millisecond), err == nil)
+	}
+	return err
+}
+
+// Trace only request metadata, never account keys, bodies, headers or queries.
+// Failures are always visible, including autocert's background renewal requests.
+type acmeLogTransport struct {
+	base  http.RoundTripper
+	debug bool
+	logf  func(string, ...any)
+}
+
+func (t *acmeLogTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	endpoint := req.URL.Host + req.URL.EscapedPath()
+	started := time.Now()
+	if t.debug {
+		t.logf("ACME request started: method=%s endpoint=%s", req.Method, endpoint)
+	}
+	response, err := t.base.RoundTrip(req)
+	elapsed := time.Since(started).Round(time.Millisecond)
+	if err != nil {
+		t.logf("ACME request failed: method=%s endpoint=%s elapsed=%s error=%v", req.Method, endpoint, elapsed, err)
+	} else if t.debug || response.StatusCode >= http.StatusBadRequest {
+		t.logf("ACME response: method=%s endpoint=%s status=%d elapsed=%s", req.Method, endpoint, response.StatusCode, elapsed)
+	}
+	return response, err
 }
 
 func (a *AutoTLS) activate(host string, cert *tls.Certificate) error {
@@ -163,7 +254,7 @@ func (a *AutoTLS) activate(host string, cert *tls.Certificate) error {
 	previous := a.certs[host]
 	a.certs[host] = &copyCert
 	a.mu.Unlock()
-	if host == a.mailDomain {
+	if a.smtpEnabled && host == a.mailDomain {
 		setSMTPTLSCertificateExpiry(&copyCert)
 	}
 	if previous == nil || !previous.Leaf.NotAfter.Equal(leaf.NotAfter) {
@@ -226,7 +317,7 @@ func (a *AutoTLS) HTTPSHandler(application http.Handler) http.Handler {
 			http.Error(w, "unconfigured hostname", http.StatusBadRequest)
 			return
 		}
-		if !a.Ready() {
+		if !a.WebReady() {
 			http.Error(w, "TLS provisioning pending or certificate expired", http.StatusServiceUnavailable)
 			return
 		}
@@ -234,23 +325,12 @@ func (a *AutoTLS) HTTPSHandler(application http.Handler) http.Handler {
 	})
 }
 
-func (a *AutoTLS) HTTPHandler() http.Handler {
-	fallback := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" {
-			if !a.Ready() {
-				http.Error(w, "TLS provisioning pending or certificate expired", http.StatusServiceUnavailable)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			http.Error(w, "use HTTPS", http.StatusBadRequest)
-			return
-		}
-		target := &url.URL{Scheme: "https", Host: a.webDomain, Path: r.URL.Path, RawPath: r.URL.RawPath, RawQuery: r.URL.RawQuery}
-		http.Redirect(w, r, target.String(), http.StatusPermanentRedirect)
-	})
+func (a *AutoTLS) HTTPHandler(application ...http.Handler) http.Handler {
+	var appHandler http.Handler
+	if len(application) != 0 {
+		appHandler = application[0]
+	}
+	fallback := webTLSHTTPFallback(a.webDomain, a.webEnabled, a.WebReady, a.Ready, appHandler)
 	handler := a.manager.HTTPHandler(fallback)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := r.Host
@@ -259,6 +339,10 @@ func (a *AutoTLS) HTTPHandler() http.Handler {
 		}
 		// Local container health checks use the listener's IP rather than a public name.
 		if r.URL.Path == "/healthz" {
+			fallback.ServeHTTP(w, r)
+			return
+		}
+		if !a.webEnabled && !strings.HasPrefix(r.URL.Path, "/.well-known/acme-challenge/") {
 			fallback.ServeHTTP(w, r)
 			return
 		}
@@ -274,5 +358,50 @@ func (a *AutoTLS) HTTPHandler() http.Handler {
 			return
 		}
 		handler.ServeHTTP(w, r)
+	})
+}
+
+// webTLSHTTPFallback presents provisioning state and redirects only when ready.
+func webTLSHTTPFallback(domain string, enabled bool, ready, healthy func() bool, application http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			if !healthy() {
+				http.Error(w, "TLS provisioning pending or certificate expired", http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if !enabled {
+			if application != nil {
+				application.ServeHTTP(w, r)
+			} else {
+				http.NotFound(w, r)
+			}
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "use HTTPS", http.StatusBadRequest)
+			return
+		}
+		// Keep visitors on HTTP until HTTPS has a usable certificate. Health
+		// checks and ACME challenge requests retain their own response paths.
+		w.Header().Set("Cache-Control", "no-store")
+		if !ready() {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Retry-After", "5")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			if r.Method != http.MethodHead {
+				_ = uiTemplates.ExecuteTemplate(w, "tls-pending", struct {
+					pageChrome
+					Domain string
+				}{newPageChrome(), domain})
+			}
+			return
+		}
+		target := &url.URL{Scheme: "https", Host: domain, Path: r.URL.Path, RawPath: r.URL.RawPath, RawQuery: r.URL.RawQuery}
+		http.Redirect(w, r, target.String(), http.StatusPermanentRedirect)
 	})
 }

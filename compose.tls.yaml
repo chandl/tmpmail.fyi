@@ -1,4 +1,4 @@
-# Standalone automatic TLS deployment: docker compose -f compose.tls.yaml up -d
+# Standalone HTTPS deployment (automatic or manual): docker compose -f compose.tls.yaml up -d
 services:
   tmpmail:
     image: ghcr.io/chandl/tmpmail.fyi:latest
@@ -7,7 +7,7 @@ services:
       - path: .env
         required: true
     environment:
-      AUTO_TLS_ENABLED: "true"
+      AUTO_TLS_ENABLED: "${AUTO_TLS_ENABLED:-true}"
       SMTP_ADDR: ":2525"
       HTTP_ADDR: ":8080"
       HTTPS_ADDR: ":8443"
@@ -17,7 +17,9 @@ services:
       - "443:8443"
     volumes:
       - tmpmail-data:/data
+      - smtp-certs:/certs:ro
     restart: unless-stopped
 
 volumes:
   tmpmail-data:
+  smtp-certs:
