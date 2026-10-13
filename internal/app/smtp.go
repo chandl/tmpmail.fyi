@@ -36,10 +36,14 @@ type SMTPServer struct {
 	rejects   chan struct{}
 	sourceMu  sync.Mutex
 	sources   map[string]int
-	tlsCert   *tlsCertificateReloader
+	tlsCert   CertificateProvider
 }
 
 func NewSMTPServer(cfg Config, store *Store, analytics ...*Analytics) (*SMTPServer, error) {
+	return NewSMTPServerWithCertificate(cfg, store, nil, analytics...)
+}
+
+func NewSMTPServerWithCertificate(cfg Config, store *Store, provider CertificateProvider, analytics ...*Analytics) (*SMTPServer, error) {
 	limit := cfg.MaxSMTPConnections
 	if limit == 0 {
 		limit = defaultMaxSMTPConnections
@@ -52,7 +56,9 @@ func NewSMTPServer(cfg Config, store *Store, analytics ...*Analytics) (*SMTPServ
 	if len(analytics) > 0 && analytics[0] != nil && analytics[0].Snapshot().Enabled {
 		server.analytics = analytics[0]
 	}
-	if cfg.SMTPTLSCertFile != "" {
+	if provider != nil {
+		server.tlsCert = provider
+	} else if cfg.SMTPTLSCertFile != "" {
 		reloader, err := newTLSCertificateReloader(cfg.SMTPTLSCertFile, cfg.SMTPTLSKeyFile, cfg.MailDomain, setSMTPTLSCertificateExpiry)
 		if err != nil {
 			return nil, fmt.Errorf("load SMTP TLS certificate: %w", err)

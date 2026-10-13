@@ -2,14 +2,23 @@ package app
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type Config struct {
+	AutoTLSEnabled           bool
+	WebDomain                string
+	HTTPSAddr                string
+	ACMEEmail                string
+	ACMEAcceptTOS            bool
+	ACMEStaging              bool
+	ACMECacheDir             string
 	AdminEnabled             bool
 	AdminAddr                string
 	AnalyticsEnabled         bool
@@ -115,7 +124,58 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("HTTP_RATE_LIMIT_BURST: %w", err)
 	}
-	return Config{AdminEnabled: adminEnabled, AdminAddr: env("ADMIN_ADDR", "127.0.0.1:8081"), AnalyticsEnabled: analyticsEnabled, AnalyticsEventTTL: analyticsTTL, AnalyticsMaxStorageBytes: analyticsStorage, MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), SMTPTLSCertFile: tlsCertFile, SMTPTLSKeyFile: tlsKeyFile, HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxSMTPConnectionsPerIP: maxSMTPConnectionsPerIP, MaxSMTPRecipients: int(maxSMTPRecipients), MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders, HTTPRateLimitRPS: rateLimitRPS, HTTPRateLimitBurst: int(rateLimitBurst), HTTPRateLimitIPHeader: rateLimitIPHeader}, nil
+	autoTLS, err := strconv.ParseBool(env("AUTO_TLS_ENABLED", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("AUTO_TLS_ENABLED must be a boolean")
+	}
+	acceptTOS, err := strconv.ParseBool(env("ACME_ACCEPT_TOS", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("ACME_ACCEPT_TOS must be a boolean")
+	}
+	staging, err := strconv.ParseBool(env("ACME_STAGING", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("ACME_STAGING must be a boolean")
+	}
+	webDomain := env("WEB_DOMAIN", domain)
+	httpsAddr := env("HTTPS_ADDR", ":8443")
+	if autoTLS {
+		if !acceptTOS {
+			return Config{}, fmt.Errorf("automatic TLS requires ACME_ACCEPT_TOS=true")
+		}
+		if tlsCertFile != "" {
+			return Config{}, fmt.Errorf("automatic TLS cannot be combined with SMTP_TLS_CERT_FILE/SMTP_TLS_KEY_FILE")
+		}
+		domain, err = normalizeTLSHost(domain)
+		if err != nil {
+			return Config{}, fmt.Errorf("MAIL_DOMAIN: %w", err)
+		}
+		webDomain, err = normalizeTLSHost(webDomain)
+		if err != nil {
+			return Config{}, fmt.Errorf("WEB_DOMAIN: %w", err)
+		}
+		// Conservatively reject shared ports even when bind addresses differ.
+		ports := make(map[string]string)
+		addresses := map[string]string{"HTTP_ADDR": env("HTTP_ADDR", ":8080"), "HTTPS_ADDR": httpsAddr, "SMTP_ADDR": env("SMTP_ADDR", ":25")}
+		if metricsEnabled := env("METRICS_ENABLED", "false"); metricsEnabled == "true" {
+			addresses["METRICS_ADDR"] = env("METRICS_ADDR", "127.0.0.1:9090")
+		}
+		if adminEnabled {
+			addresses["ADMIN_ADDR"] = env("ADMIN_ADDR", "127.0.0.1:8081")
+		}
+		for name, addr := range addresses {
+			_, port, err := net.SplitHostPort(addr)
+			n, numberErr := strconv.Atoi(port)
+			if err != nil || numberErr != nil || n < 1 || n > 65535 {
+				return Config{}, fmt.Errorf("%s must contain a valid numeric TCP port", name)
+			}
+			port = strconv.Itoa(n)
+			if previous, ok := ports[port]; ok {
+				return Config{}, fmt.Errorf("%s and %s use the same port", name, previous)
+			}
+			ports[port] = name
+		}
+	}
+	return Config{AutoTLSEnabled: autoTLS, WebDomain: webDomain, HTTPSAddr: httpsAddr, ACMEEmail: strings.TrimSpace(os.Getenv("ACME_EMAIL")), ACMEAcceptTOS: acceptTOS, ACMEStaging: staging, ACMECacheDir: env("ACME_CACHE_DIR", filepath.Join(env("DATA_DIR", "/data"), "acme")), AdminEnabled: adminEnabled, AdminAddr: env("ADMIN_ADDR", "127.0.0.1:8081"), AnalyticsEnabled: analyticsEnabled, AnalyticsEventTTL: analyticsTTL, AnalyticsMaxStorageBytes: analyticsStorage, MailDomain: domain, DataDir: env("DATA_DIR", "/data"), SMTPAddr: env("SMTP_ADDR", ":25"), SMTPTLSCertFile: tlsCertFile, SMTPTLSKeyFile: tlsKeyFile, HTTPAddr: env("HTTP_ADDR", ":8080"), MetricsAddr: env("METRICS_ADDR", "127.0.0.1:9090"), MessageTTL: ttl, MaxMessageBytes: maxMessage, MaxStorageBytes: maxStorage, MaxSMTPConnections: int(maxSMTPConnections), MaxSMTPConnectionsPerIP: maxSMTPConnectionsPerIP, MaxSMTPRecipients: int(maxSMTPRecipients), MaxHTTPRequests: maxHTTPRequests, MetricsEnabled: env("METRICS_ENABLED", "false") == "true", HTTPAccessLogMode: accessLogMode, HTTPLogHeaders: logHeaders, HTTPRateLimitRPS: rateLimitRPS, HTTPRateLimitBurst: int(rateLimitBurst), HTTPRateLimitIPHeader: rateLimitIPHeader}, nil
 }
 
 func parseHTTPLogHeaders(value string) ([]string, error) {
