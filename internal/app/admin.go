@@ -23,10 +23,11 @@ var adminVersion = assetVersion(uiCSS, uiScript, adminCSS, adminScript)
 var adminTemplate = template.Must(template.New("admin").ParseFS(uiAssets, "assets/ui/layout.html", "assets/ui/admin.html"))
 
 type adminServer struct {
-	cfg       Config
-	store     *Store
-	smtp      *SMTPServer
-	analytics *Analytics
+	cfg        Config
+	store      *Store
+	smtp       *SMTPServer
+	analytics  *Analytics
+	tlsSources TLSRuntimeSources
 }
 type adminRanking struct {
 	Value string `json:"value"`
@@ -55,8 +56,11 @@ type adminOverview struct {
 
 // NewAdminServer serves metadata on the separately configured private listener.
 // It deliberately has no product request instrumentation or application authentication.
-func NewAdminServer(cfg Config, store *Store, smtp *SMTPServer, analytics *Analytics) http.Handler {
-	s := &adminServer{cfg, store, smtp, analytics}
+func NewAdminServer(cfg Config, store *Store, smtp *SMTPServer, analytics *Analytics, tlsSources ...TLSRuntimeSources) http.Handler {
+	s := &adminServer{cfg: cfg, store: store, smtp: smtp, analytics: analytics}
+	if len(tlsSources) != 0 {
+		s.tlsSources = tlsSources[0]
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /openapi.json", serveAPISpec)
 	mux.HandleFunc("GET /ui.js", adminAsset("text/javascript; charset=utf-8", uiScript))
@@ -167,6 +171,7 @@ func (s *adminServer) status(w http.ResponseWriter, r *http.Request) {
 	if s.analytics != nil {
 		result["analytics"] = s.analytics.Snapshot()
 	}
+	result["tls"] = tlsOverview(s.cfg, s.smtp, s.tlsSources)
 	adminJSON(w, result)
 }
 func (s *adminServer) overview(w http.ResponseWriter, r *http.Request) {

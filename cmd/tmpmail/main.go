@@ -150,7 +150,7 @@ func main() {
 
 	var adminServer *http.Server
 	if cfg.AdminEnabled {
-		adminServer = newHTTPServer(cfg.AdminAddr, app.NewAdminServer(cfg, store, smtpServer, analytics))
+		adminServer = newHTTPServer(cfg.AdminAddr, app.NewAdminServer(cfg, store, smtpServer, analytics, app.TLSRuntimeSources{Automatic: automaticTLS, ManualWeb: manualHTTPS}))
 		go func() {
 			log.Printf("private admin listening on %s (no application authentication)", cfg.AdminAddr)
 			err := adminServer.ListenAndServe()
