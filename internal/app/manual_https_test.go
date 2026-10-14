@@ -3,10 +3,12 @@ package app
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -153,5 +155,71 @@ func TestManualHTTPSWithAutomaticSMTP(t *testing.T) {
 	handler.ServeHTTP(w, httptest.NewRequest("GET", "http://127.0.0.1/healthz", nil))
 	if w.Code != http.StatusNoContent {
 		t.Fatal("mixed manual and automatic TLS did not become healthy")
+	}
+}
+
+func TestManualHTTPSRetainsValidCertificateForInvalidDates(t *testing.T) {
+	for _, future := range []bool{false, true} {
+		name := "expired"
+		if future {
+			name = "future"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				certFile, keyFile := writeTestCertificate(t, "web.test", 1)
+				cfg := Config{WebDomain: "web.test", HTTPSTLSCertFile: certFile, HTTPSTLSKeyFile: keyFile}
+				m, err := NewManualHTTPS(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				original, err := m.GetCertificate(nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				now := time.Now()
+				before, after := now.Add(-2*time.Hour), now.Add(-time.Hour)
+				if future {
+					before, after = now.Add(time.Hour), now.Add(2*time.Hour)
+				}
+				replacement := statusCertificate(t, "web.test", before, after)
+				writePair := func(cert *tls.Certificate) {
+					t.Helper()
+					key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				writePair(replacement)
+				for i := 0; i < 2; i++ {
+					got, err := m.GetCertificate(nil)
+					if err != nil || got != original || !m.Ready() {
+						t.Fatalf("invalid replacement displaced valid certificate: %v", err)
+					}
+				}
+				if _, err := NewManualHTTPS(cfg); err == nil {
+					t.Fatal("invalid initial certificate accepted")
+				}
+				if future {
+					// The same files become usable when NotBefore is reached.
+					time.Sleep(time.Hour)
+					got, err := m.GetCertificate(nil)
+					if err != nil || got == original || !m.Ready() {
+						t.Fatalf("future replacement not adopted once valid: %v", err)
+					}
+				}
+				valid := statusCertificate(t, "web.test", now.Add(-time.Hour), now.Add(3*time.Hour))
+				writePair(valid)
+				got, err := m.GetCertificate(nil)
+				if err != nil || got == original || !got.Leaf.NotAfter.Equal(now.Add(3*time.Hour).Truncate(time.Second)) {
+					t.Fatalf("valid replacement not adopted: %v", err)
+				}
+			})
+		})
 	}
 }

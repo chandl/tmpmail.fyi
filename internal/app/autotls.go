@@ -136,43 +136,48 @@ func (a *AutoTLS) WaitReady(ctx context.Context) error {
 // Run activates cached certificates and starts autocert's renewal timers even on
 // an idle deployment. RSA certificates are provisioned for broad SMTP support.
 func (a *AutoTLS) Run(ctx context.Context) {
-	delay := time.Minute
-	for {
-		var attempts sync.WaitGroup
-		for _, host := range a.domains {
-			if ctx.Err() != nil {
-				return
-			}
-			attempts.Add(1)
-			go func(host string) {
-				defer attempts.Done()
-				if err := a.refreshCertificate(ctx, host); err != nil {
+	a.run(ctx, a.refreshCertificate)
+}
+
+func (a *AutoTLS) run(ctx context.Context, refresh func(context.Context, string) error) {
+	var workers sync.WaitGroup
+	for _, host := range a.domains {
+		workers.Add(1)
+		go func(host string) {
+			defer workers.Done()
+			delay := time.Minute
+			for ctx.Err() == nil {
+				if err := refresh(ctx, host); err != nil {
 					log.Printf("automatic TLS for %s: %v", host, err)
 				}
-			}(host)
-		}
-		attempts.Wait()
-
-		if a.Ready() {
-			a.once.Do(func() { log.Printf("automatic TLS certificates ready"); close(a.ready) })
-			delay = time.Minute
-		} else if delay < time.Hour {
-			delay *= 2
-			if delay > time.Hour {
-				delay = time.Hour
+				if ctx.Err() != nil {
+					return
+				}
+				if a.Ready() {
+					a.once.Do(func() { log.Printf("automatic TLS certificates ready"); close(a.ready) })
+				}
+				// A different hostname's failure or slow issuance must not delay
+				// adoption of renewals for this hostname.
+				if _, err := a.certificate(host); err == nil {
+					delay = time.Minute
+				} else {
+					delay *= 2
+					if delay > time.Hour {
+						delay = time.Hour
+					}
+					log.Printf("automatic TLS not ready: domain=%s retry_in=%s next_attempt=%s; check DNS and public ports 80/443 for this domain", host, delay, time.Now().Add(delay).UTC().Format(time.RFC3339))
+				}
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
 			}
-		}
-		if !a.Ready() {
-			log.Printf("automatic TLS not ready: retry_in=%s next_attempt=%s; check DNS and public ports 80/443 for all configured domains", delay, time.Now().Add(delay).UTC().Format(time.RFC3339))
-		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
+		}(host)
 	}
+	workers.Wait()
 }
 
 // refreshCertificate reports progress while autocert waits for CA validation.
@@ -210,7 +215,8 @@ func (a *AutoTLS) refreshCertificate(ctx context.Context, host string) error {
 	return err
 }
 
-// Trace only request metadata, never account keys, bodies, headers or queries.
+// Trace request metadata and allowlisted validation summaries, never account
+// keys, raw bodies, authorization headers or URL queries.
 // Failures are always visible, including autocert's background renewal requests.
 type acmeLogTransport struct {
 	base  http.RoundTripper
@@ -230,6 +236,14 @@ func (t *acmeLogTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		t.logf("ACME request failed: method=%s endpoint=%s elapsed=%s error=%v", req.Method, endpoint, elapsed, err)
 	} else if t.debug || response.StatusCode >= http.StatusBadRequest {
 		t.logf("ACME response: method=%s endpoint=%s status=%d elapsed=%s", req.Method, endpoint, response.StatusCode, elapsed)
+	}
+	if err == nil && response != nil {
+		if response.StatusCode >= http.StatusBadRequest && response.Header.Get("Retry-After") != "" {
+			t.logf("ACME retry requested: endpoint=%s retry_after=%q", endpoint, response.Header.Get("Retry-After"))
+		}
+		if t.debug && response.Body != nil {
+			response.Body = &acmeDiagnosticBody{ReadCloser: response.Body, endpoint: endpoint, logf: t.logf}
+		}
 	}
 	return response, err
 }
