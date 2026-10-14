@@ -376,7 +376,8 @@ func (r *tlsCertificateReloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Cert
 	}
 	cert, loadedState, err := loadTLSCertificate(r.certFile, r.keyFile, r.serverName)
 	if err != nil {
-		r.failedReloadState, r.hasFailedReload = state, true
+		// A future-dated pair may become valid without another file change.
+		r.failedReloadState, r.hasFailedReload = state, !errors.Is(err, errTLSCertificateNotYetValid)
 		log.Printf("TLS certificate reload failed: domain=%s error=%v", r.serverName, err)
 		return r.cert, nil
 	}
@@ -396,6 +397,8 @@ func setSMTPTLSCertificateExpiry(cert *tls.Certificate) {
 	smtpTLSCertificateNotAfter.Set(float64(leaf.NotAfter.Unix()))
 }
 
+var errTLSCertificateNotYetValid = errors.New("certificate is not yet valid")
+
 func loadTLSCertificate(certFile, keyFile, serverName string) (*tls.Certificate, tlsCertificateState, error) {
 	before, err := tlsCertificateFilesState(certFile, keyFile)
 	if err != nil {
@@ -411,6 +414,13 @@ func loadTLSCertificate(certFile, keyFile, serverName string) (*tls.Certificate,
 	}
 	if err := leaf.VerifyHostname(serverName); err != nil {
 		return nil, tlsCertificateState{}, fmt.Errorf("certificate does not cover %q: %w", serverName, err)
+	}
+	now := time.Now()
+	if now.Before(leaf.NotBefore) {
+		return nil, tlsCertificateState{}, errTLSCertificateNotYetValid
+	}
+	if !now.Before(leaf.NotAfter) {
+		return nil, tlsCertificateState{}, errors.New("certificate has expired")
 	}
 	after, err := tlsCertificateFilesState(certFile, keyFile)
 	if err != nil {
