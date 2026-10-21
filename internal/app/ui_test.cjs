@@ -7,7 +7,7 @@ const script = readFileSync(join(__dirname, 'assets/ui/ui.js'), 'utf8');
 
 // A minimal DOM surface drives the actual shipped script, including selection,
 // fetch, and polling. No browser packages or copied implementation are needed.
-function harness({ ids = ['a', 'b'], hasMore = false, hash = '', loaded = true, selectedID = ids[0], detailStatus = 200 } = {}) {
+function harness({ ids = ['a', 'b'], hasMore = false, hash = '', loaded = true, selectedID = ids[0], detailStatus = 200, hasHTML = false } = {}) {
   const timers = [];
   const requests = [];
   const replacements = [];
@@ -32,8 +32,17 @@ function harness({ ids = ['a', 'b'], hasMore = false, hash = '', loaded = true, 
     const article = element({ messageId: id, loaded: id === selectedID && loaded ? 'true' : 'false' });
     article.text = { textContent: id === selectedID && loaded ? 'already rendered' : '' };
     article.headers = { textContent: '' };
-    article.classList = classes(...(index === 0 ? ['is-active'] : []));
-    article.querySelector = selector => ({ '.plain-body pre': article.text, '.headers pre': article.headers })[selector] || null;
+    article.classList = classes(...(index === 0 ? ['is-active'] : []), ...(hasHTML ? ['has-html'] : []));
+    article.label = { textContent: '1 image blocked for privacy' };
+    article.imagesButton = element();
+    article.imagesButton.closest = () => article;
+    article.holder = element();
+    article.holder.append = frame => {
+      article.frame = frame;
+      frame.remove = () => { article.frame = null; };
+    };
+    article.holder.querySelector = selector => selector === 'iframe' ? article.frame : null;
+    article.querySelector = selector => ({ '.plain-body pre': article.text, '.headers pre': article.headers, '[data-frame]': article.holder, '[data-frame] iframe': article.frame, '[data-blocked-label]': article.label })[selector] || null;
     return article;
   });
   const list = element();
@@ -46,7 +55,7 @@ function harness({ ids = ['a', 'b'], hasMore = false, hash = '', loaded = true, 
   const status = { textContent: '' };
   const body = element({ address: 'build@mail.test', offset: '0', hasMore: String(hasMore), selectedMessage: selectedID });
   const document = Object.assign(element(), {
-    documentElement: element(), body, visibilityState: 'visible',
+    createElement: () => element(), documentElement: element(), body, visibilityState: 'visible',
     querySelector: selector => ({ '.mailbox': mailbox, '#status': status })[selector] || null,
     querySelectorAll: selector => selector === '.message-list .message-row' ? rows : [],
     getElementById: id => articles.find(article => 'm-' + article.dataset.messageId === id),
@@ -68,6 +77,9 @@ function harness({ ids = ['a', 'b'], hasMore = false, hash = '', loaded = true, 
   vm.runInNewContext(script, context);
   return {
     rows, articles, requests, replacements,
+    toggleImages(index) {
+      reader.listeners.click({ target: { closest: selector => selector === '[data-images-toggle]' ? articles[index].imagesButton : null } });
+    },
     get reloads() { return reloads; },
     async settle() { await new Promise(resolve => setImmediate(resolve)); },
     async poll(page) {
@@ -146,4 +158,28 @@ test('server-selected later body is reused and selection query stays aligned', a
   await ui.settle();
   assert.deepEqual(ui.requests, ['/ui/messages/a']);
   assert.equal(ui.replacements.at(-1), '/?inbox=build&message=a#m-a');
+});
+
+
+test('image consent reloads only that message and can be revoked', () => {
+  const ui = harness({ hasHTML: true });
+  const first = ui.articles[0];
+  const second = ui.articles[1];
+  assert.equal(first.frame.src, '/ui/messages/a/html');
+  ui.toggleImages(0);
+  assert.equal(first.frame.src, '/ui/messages/a/html?images=load');
+  assert.equal(first.frame.attributes.sandbox, 'allow-popups allow-popups-to-escape-sandbox');
+  assert.equal(first.imagesButton.attributes['aria-pressed'], 'true');
+  assert.equal(first.imagesButton.textContent, 'Block images');
+  assert.equal(first.label.textContent, 'Remote images enabled');
+  ui.click(1);
+  assert.equal(second.frame.src, '/ui/messages/b/html');
+  ui.click(0);
+  assert.equal(first.frame.src, '/ui/messages/a/html?images=load');
+  ui.toggleImages(0);
+  assert.equal(first.frame.src, '/ui/messages/a/html');
+  assert.equal(first.imagesButton.attributes['aria-pressed'], 'false');
+  assert.equal(first.imagesButton.textContent, 'Load images');
+  assert.equal(first.label.textContent, '1 image blocked for privacy');
+  assert.equal(harness({ hasHTML: true }).articles[0].frame.src, '/ui/messages/a/html');
 });

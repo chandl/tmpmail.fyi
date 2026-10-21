@@ -136,3 +136,21 @@ func TestParseMultipartConvertsBodiesButPreservesTextAttachments(t *testing.T) {
 		t.Fatalf("text attachment was transcoded: metadata=%#v content=%q found=%t", meta, content, ok)
 	}
 }
+
+func TestImageOptInPreservesOnlySafeImageSources(t *testing.T) {
+	source := `<img src="https://images.example/logo.png" onload="alert(1)" srcset="https://other.example/logo.png 2x"><img src="http://images.example/pixel"><img src="javascript:alert(1)"><img src="data:image/svg+xml,unsafe"><img src="/local"><img src="//images.example/logo.png"><video src="https://images.example/video"></video><iframe src="https://images.example/frame"></iframe><script>alert(1)</script>`
+	enabled := sanitizeHTMLWithImages(source, true)
+	for _, want := range []string{`src="https://images.example/logo.png"`, `src="http://images.example/pixel"`} {
+		if !strings.Contains(enabled, want) {
+			t.Fatalf("missing allowed image: %q", enabled)
+		}
+	}
+	for _, unsafe := range []string{"onload", "srcset", "javascript:", "data:image", `src="/`, `src="https://images.example/video"`, "<iframe", "<script"} {
+		if strings.Contains(enabled, unsafe) {
+			t.Fatalf("unsafe content %q survived: %q", unsafe, enabled)
+		}
+	}
+	if blocked := sanitizeHTML(source); strings.Contains(blocked, "src=") {
+		t.Fatalf("image opt-in changed default sanitization: %q", blocked)
+	}
+}

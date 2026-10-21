@@ -696,3 +696,33 @@ func TestInboxRequestedMessageRendersSingleBodyWithFallbackLinks(t *testing.T) {
 		t.Fatalf("missing selection should render first body")
 	}
 }
+
+func TestMessageImagesRequireExplicitOptIn(t *testing.T) {
+	store := testStore(t, time.Hour)
+	message := saveOne(t, store, "build@mail.test", "sender@example.org", []byte("Content-Type: text/html\r\n\r\n<p>Hello</p><img src=\"https://tracker.example/p.gif\" width=\"1\" height=\"1\" onerror=\"alert(1)\"><script>alert(1)</script>"))
+	handler := NewHTTPServer(Config{MailDomain: "mail.test"}, store)
+	for _, query := range []string{"", "?images=true", "?images=load", ""} {
+		frame := httptest.NewRecorder()
+		handler.ServeHTTP(frame, httptest.NewRequest(http.MethodGet, "/ui/messages/"+message.ID+"/html"+query, nil))
+		enabled := query == "?images=load"
+		body := frame.Body.String()
+		if frame.Code != http.StatusOK || strings.Contains(body, "<script") || strings.Contains(body, "onerror") {
+			t.Fatalf("unsafe or failed preview: status=%d body=%q", frame.Code, body)
+		}
+		if strings.Contains(body, `src="https://tracker.example/p.gif"`) != enabled || strings.Contains(body, blockedImageCSS) == enabled {
+			t.Fatalf("unexpected image state for %q: %q", query, body)
+		}
+		policy := "img-src 'none'"
+		if enabled {
+			policy = "img-src https: http:"
+		}
+		if !strings.Contains(frame.Header().Get("Content-Security-Policy"), policy) || frame.Header().Get("Referrer-Policy") != "no-referrer" {
+			t.Fatalf("unexpected preview security headers: %v", frame.Header())
+		}
+	}
+	page := httptest.NewRecorder()
+	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/?inbox=build", nil))
+	if !strings.Contains(page.Body.String(), `aria-pressed="false" data-images-toggle>Load images`) {
+		t.Fatal("missing default-off image toggle")
+	}
+}
