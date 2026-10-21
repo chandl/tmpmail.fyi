@@ -224,7 +224,7 @@
     const list = $('.message-list', mailbox);
     const reader = $('.reader-pane', mailbox);
     const backButton = $('[data-back]', mailbox);
-    const mobile = matchMedia('(max-width: 720px)');
+    const mobile = matchMedia('(max-width: 960px)');
     const rows = () => $$('.message-row', list);
     const articleFor = row => row && document.getElementById('m-' + row.dataset.id);
     let current = null;
@@ -236,7 +236,7 @@
       frame.className = 'html-frame';
       frame.title = 'Formatted email: ' + ($('.message-subject', article)?.textContent || '(no subject)');
       frame.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
-      frame.src = '/ui/messages/' + encodeURIComponent(article.dataset.messageId) + '/html';
+      frame.src = '/ui/messages/' + encodeURIComponent(article.dataset.messageId) + '/html' + (article.dataset.imagesLoaded === 'true' ? '?images=load' : '');
       holder.append(frame);
     };
     const showView = (article, view) => {
@@ -270,6 +270,10 @@
       if (!note) return;
       const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
       note.hidden = total === 0;
+      if (article.dataset.imagesLoaded === 'true') {
+        $('[data-blocked-label]', note).textContent = 'Remote images enabled';
+        return;
+      }
       $('[data-blocked-label]', note).textContent =
         total === 0 ? '' :
         pixels === total ? (total === 1 ? 'Tracking pixel blocked' : plural(total, 'tracking pixel') + ' blocked') :
@@ -370,6 +374,23 @@
       }
     });
     reader.addEventListener('click', event => {
+      const imagesButton = event.target.closest('[data-images-toggle]');
+      if (imagesButton) {
+        const article = imagesButton.closest('.message');
+        const enabled = article.dataset.imagesLoaded !== 'true';
+        article.dataset.imagesLoaded = String(enabled);
+        imagesButton.setAttribute('aria-pressed', String(enabled));
+        imagesButton.textContent = enabled ? 'Block images' : 'Load images';
+        const label = $('[data-blocked-label]', article);
+        if (enabled) {
+          article.dataset.blockedLabel = label.textContent;
+          label.textContent = 'Remote images enabled';
+        } else {
+          label.textContent = article.dataset.blockedLabel;
+        }
+        $('[data-frame] iframe', article)?.remove();
+        ensureFrame(article);
+      }
       const button = event.target.closest('.segmented button');
       if (button) showView(button.closest('.message'), button.dataset.view);
     });

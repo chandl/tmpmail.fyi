@@ -135,8 +135,8 @@ func senderFromHeaders(headers, envelope string) (name, address string) {
 	return strings.TrimSpace(from.Name), from.Address
 }
 
-// blockedImageCSS marks where an image would have been. Images are never
-// loaded (the message CSP sets img-src 'none'), so each <img> is drawn as a
+// blockedImageCSS marks where an image would have been. Until the reader opts
+// in, the message CSP sets img-src 'none', so each <img> is drawn as a
 // striped placeholder showing its alt text.
 const blockedImageCSS = `img{display:inline-block;background:repeating-linear-gradient(135deg,#f4f4f1 0 6px,#ebebe7 6px 12px);outline:1px dashed #b9b9c0;outline-offset:-1px;color:#6c6c75;font-size:12px}`
 

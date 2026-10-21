@@ -10,6 +10,7 @@ import (
 	"mime/quotedprintable"
 	"net/mail"
 	"net/textproto"
+	"net/url"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -31,6 +32,10 @@ type parsedEmail struct {
 }
 
 func parseEmail(raw string) parsedEmail {
+	return parseEmailWithImages(raw, false)
+}
+
+func parseEmailWithImages(raw string, loadImages bool) parsedEmail {
 	headers, fallback := splitRawMessage(raw)
 	result := parsedEmail{Headers: headers, Text: fallback}
 	message, err := mail.ReadMessage(strings.NewReader(raw))
@@ -43,7 +48,7 @@ func parseEmail(raw string) parsedEmail {
 	if parts.Plain != "" {
 		result.Text = parts.Plain
 	}
-	result.HTML = sanitizeHTML(parts.HTML)
+	result.HTML = sanitizeHTMLWithImages(parts.HTML, loadImages)
 	if parts.Plain == "" && result.HTML != "" {
 		result.Text = htmlText(result.HTML)
 	}
@@ -193,6 +198,10 @@ func decodeText(body io.Reader, transferEncoding, charsetLabel string) (string, 
 }
 
 func sanitizeHTML(source string) string {
+	return sanitizeHTMLWithImages(source, false)
+}
+
+func sanitizeHTMLWithImages(source string, loadImages bool) string {
 	if source == "" {
 		return ""
 	}
@@ -200,7 +209,7 @@ func sanitizeHTML(source string) string {
 	if err != nil {
 		return ""
 	}
-	removeUnsafeHTML(doc)
+	removeUnsafeHTML(doc, loadImages)
 	var output bytes.Buffer
 	if head := findElement(doc, "head"); head != nil {
 		for child := head.FirstChild; child != nil; child = child.NextSibling {
@@ -217,7 +226,7 @@ func sanitizeHTML(source string) string {
 	return output.String()
 }
 
-func removeUnsafeHTML(node *html.Node) {
+func removeUnsafeHTML(node *html.Node, loadImages bool) {
 	for child := node.FirstChild; child != nil; {
 		next := child.NextSibling
 		if child.Type == html.ElementNode && map[string]bool{"script": true, "iframe": true, "object": true, "embed": true, "link": true, "form": true, "meta": true, "base": true}[child.Data] {
@@ -227,6 +236,10 @@ func removeUnsafeHTML(node *html.Node) {
 				attrs := child.Attr[:0]
 				for _, attr := range child.Attr {
 					name := strings.ToLower(attr.Key)
+					if loadImages && child.Data == "img" && name == "src" && safeImageSource(attr.Val) {
+						attrs = append(attrs, html.Attribute{Key: "src", Val: strings.TrimSpace(attr.Val)})
+						continue
+					}
 					if !strings.HasPrefix(name, "on") && name != "src" && name != "srcset" && name != "target" && name != "rel" && (name != "href" || child.Data == "a" && safeLink(attr.Val)) {
 						attrs = append(attrs, attr)
 					}
@@ -236,10 +249,16 @@ func removeUnsafeHTML(node *html.Node) {
 					child.Attr = append(child.Attr, html.Attribute{Key: "target", Val: "_blank"}, html.Attribute{Key: "rel", Val: "noopener noreferrer"})
 				}
 			}
-			removeUnsafeHTML(child)
+			removeUnsafeHTML(child, loadImages)
 		}
 		child = next
 	}
+}
+
+// Only explicit remote HTTP(S) image sources are allowed after opting in.
+func safeImageSource(value string) bool {
+	source, err := url.Parse(strings.TrimSpace(value))
+	return err == nil && (source.Scheme == "https" || source.Scheme == "http") && source.Hostname() != ""
 }
 
 func safeLink(value string) bool {

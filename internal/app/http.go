@@ -58,15 +58,20 @@ func NewHTTPServer(cfg Config, store *Store, analytics ...*Analytics) http.Handl
 		if r.Context().Err() != nil {
 			return
 		}
-		content := parseEmail(message.Body).HTML
+		loadImages := r.URL.Query().Get("images") == "load"
+		content := parseEmailWithImages(message.Body, loadImages).HTML
 		if content == "" {
 			http.NotFound(w, r)
 			return
 		}
 		setSensitiveResponseHeaders(w)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'")
-		_, _ = w.Write([]byte(renderHTMLMessage(content)))
+		imagePolicy := "'none'"
+		if loadImages {
+			imagePolicy = "https: http:"
+		}
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src "+imagePolicy+"; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'")
+		_, _ = w.Write([]byte(renderHTMLMessage(content, loadImages)))
 	})
 	api.HandlerFromMux(&apiServer{store: store}, mux)
 	mux.HandleFunc("GET /openapi.json", serveAPISpec)
@@ -116,8 +121,12 @@ func serveFaviconAsset(name string) http.HandlerFunc {
 	}
 }
 
-func renderHTMLMessage(content string) string {
-	return `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><style>:root{color-scheme:light}html,body{margin:0;background:#fff;color:#1e293b;font:15px/1.5 ui-sans-serif,system-ui,sans-serif}` + blockedImageCSS + `</style></head><body>` + content + `</body></html>`
+func renderHTMLMessage(content string, loadImages bool) string {
+	imageCSS := blockedImageCSS
+	if loadImages {
+		imageCSS = ""
+	}
+	return `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><style>:root{color-scheme:light}html,body{margin:0;background:#fff;color:#1e293b;font:15px/1.5 ui-sans-serif,system-ui,sans-serif}` + imageCSS + `</style></head><body>` + content + `</body></html>`
 }
 
 // NewMetricsServer serves only the Prometheus scrape endpoint.

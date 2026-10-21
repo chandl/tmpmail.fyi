@@ -187,16 +187,21 @@ kbd{display:inline-block;min-width:1.6em;padding:0 5px;border:1px solid var(--bo
 .meta-grid dd{margin:0;min-width:0;color:var(--text-2);overflow-wrap:anywhere}
 .meta-grid .addr{color:var(--muted)}
 .meta-grid .expiry{color:var(--muted)}
-.body-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:24px}
+.body-toolbar{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;margin-top:24px}
 .message:not(.has-html) .body-toolbar{display:none}
-.body-tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:4px 12px;min-width:0}
-.blocked-images{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;cursor:help}
+.body-tools{display:contents}
+.body-toolbar .segmented{justify-self:start}
+.body-toolbar .dark-preview{grid-column:2;grid-row:1;white-space:nowrap}
+.blocked-images{grid-column:1/-1;grid-row:2;display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:13px;cursor:help}
+.blocked-images [data-blocked-label]{flex:1;min-width:0}
+.blocked-images button{flex:none;white-space:nowrap}
 .blocked-images svg{width:15px;height:15px;flex:none}
 .message.show-plain .blocked-images{display:none}
 .segmented{display:inline-flex;padding:3px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2)}
 .segmented button{min-height:32px;padding:0 14px;border:0;border-radius:999px;background:transparent;color:var(--text-2);font-size:13.5px;font-weight:500;cursor:pointer;transition:background-color var(--fast) var(--ease),color var(--fast) var(--ease)}
 .segmented button:hover{color:var(--text)}
 .segmented button[aria-pressed="true"]{background:var(--surface);color:var(--text);box-shadow:0 0 0 1px var(--border-strong)}
+html:not(.js) [data-images-toggle]{display:none}
 html:not(.js) .segmented{display:none}
 .paper{margin-top:16px;background:#ffffff;color:#1e1e22;border:1px solid var(--paper-border);border-radius:var(--radius);color-scheme:light}
 .message.has-html .body-toolbar+.paper,.message.has-html .paper-frame+.plain-body .paper{margin-top:12px}
@@ -213,7 +218,7 @@ html:not(.js) .segmented{display:none}
 .plain-body .paper pre{color:var(--text)}
 .plain-body .paper pre:empty::before{color:var(--muted)}
 /* HTML emails stay as designed unless "Dark preview" is on (dark theme only).
-   Inverting is safe here because images in emails are always blocked. */
+   Loaded images are inverted along with the rest of the email. */
 .dark-preview{display:none}
 .dark-preview[aria-pressed="true"]{color:var(--text)}
 .dark-preview[aria-pressed="true"] svg{color:var(--accent)}
@@ -278,8 +283,8 @@ html:not(.js) .dev-tools{display:none}
 .prose li+li{margin-top:6px}
 .prose .back{display:inline-block;margin-top:36px;font-weight:550}
 
-/* Mobile */
-@media (max-width:720px){
+/* Use a full-width reader on phones and narrow desktop panels. */
+@media (max-width:960px){
   body{font-size:15px}
   .wrap{padding:0 16px}
   .tagline{display:none}
@@ -319,6 +324,11 @@ html:not(.js) .dev-tools{display:none}
   .paper pre{padding:18px}
   .site-footer .copyright{margin-left:0}
   .shortcuts{display:none!important}
+}
+@media (max-width:400px){
+  .body-toolbar{column-gap:6px}
+  .body-toolbar .segmented button{padding:0 8px;font-size:13px}
+  .body-toolbar .dark-preview{padding:0 6px;font-size:12px}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:0s!important;animation-iteration-count:1!important;transition-duration:0s!important}
